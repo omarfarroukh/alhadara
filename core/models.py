@@ -2,6 +2,7 @@ from django.db import models
 from django.contrib.auth.models import AbstractBaseUser, BaseUserManager, PermissionsMixin
 from django.core.validators import MinValueValidator, MaxValueValidator
 from django.utils import timezone
+from .validators import syrian_phone_validator
 from django.contrib.auth.hashers import make_password, is_password_usable
 
 
@@ -49,7 +50,11 @@ class User(AbstractBaseUser, PermissionsMixin):
     last_name = models.CharField(max_length=150)  # Removed blank/null
     
     # Authentication Info
-    phone = models.CharField(max_length=20, unique=True)
+    phone = models.CharField(
+        max_length=20,
+        unique=True,
+        validators=[syrian_phone_validator]
+    )
     
     # Role and Permissions
     user_type = models.CharField(max_length=10, choices=USER_TYPE_CHOICES)

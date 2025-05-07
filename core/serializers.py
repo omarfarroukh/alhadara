@@ -1,6 +1,7 @@
 from rest_framework import serializers
 from django.contrib.auth.hashers import make_password, identify_hasher
 from rest_framework_simplejwt.tokens import RefreshToken
+from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from djoser.serializers import UserCreateSerializer as BaseUserCreateSerializer, UserSerializer
 from .models import (
     User, SecurityQuestion, SecurityAnswer, Interest, 
@@ -35,7 +36,21 @@ class CustomUserSerializer(UserSerializer):
     class Meta(UserSerializer.Meta):
         model = User
         fields = ('id', 'phone', 'first_name', 'middle_name', 'last_name', 'user_type', 'is_active', 'last_login')
-
+        extra_kwargs = {
+            'phone': {
+                'error_messages': {
+                    'invalid': 'Please enter a valid Syrian phone number (09XXXXXXXX or +9639XXXXXXXX)'
+                }
+            }
+        }
+        
+class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
+    @classmethod
+    def get_token(cls, user):
+        token = super().get_token(user)
+        # Add custom claims
+        token['user_type'] = user.user_type
+        return token
 class SecurityQuestionSerializer(serializers.ModelSerializer):
     class Meta:
         model = SecurityQuestion

@@ -1,8 +1,9 @@
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
+from rest_framework_simplejwt.views import TokenRefreshView, TokenVerifyView
 from .views import (
     SecurityQuestionViewSet, SecurityAnswerViewSet, InterestViewSet,
-    ProfileViewSet, EWalletViewSet, DepositMethodViewSet, DepositRequestViewSet
+    ProfileViewSet, EWalletViewSet, DepositMethodViewSet, DepositRequestViewSet, CustomTokenObtainPairView
 )
 
 router = DefaultRouter()
@@ -15,5 +16,11 @@ router.register(r'deposit-methods', DepositMethodViewSet)
 router.register(r'deposit-requests', DepositRequestViewSet, basename='deposit-request')
 
 urlpatterns = [
+    # JWT Authentication endpoints
+    path('auth/jwt/create/', CustomTokenObtainPairView.as_view(), name='jwt-create'),
+    path('auth/jwt/refresh/', TokenRefreshView.as_view(), name='jwt-refresh'),
+    path('auth/jwt/verify/', TokenVerifyView.as_view(), name='jwt-verify'),
+    
+    # Router URLs
     path('', include(router.urls)),
 ]

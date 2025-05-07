@@ -51,7 +51,8 @@ INSTALLED_APPS = [
     'debug_toolbar',
     'channels',
     'core',
-    'courses'
+    'courses',
+    'rest_framework_simplejwt.token_blacklist',  # Add this line
 ]
 
 MIDDLEWARE = [
@@ -89,16 +90,6 @@ MEDIA_URL = '/media/'
 MEDIA_ROOT = BASE_DIR / 'media'
 
 AUTH_USER_MODEL = 'core.User'
-
-REST_FRAMEWORK = {
-    'DEFAULT_AUTHENTICATION_CLASSES': (
-        'rest_framework_simplejwt.authentication.JWTAuthentication',
-    ),
-    'DEFAULT_PERMISSION_CLASSES': [
-        'rest_framework.permissions.IsAuthenticated',
-    ],
-     'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',
-}
 
 
 # Database
@@ -156,6 +147,26 @@ STATIC_URL = 'static/'
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
+REST_FRAMEWORK = {
+    'DEFAULT_AUTHENTICATION_CLASSES': (
+        'rest_framework_simplejwt.authentication.JWTAuthentication',
+    ),
+    'DEFAULT_PERMISSION_CLASSES': [
+        'rest_framework.permissions.IsAuthenticated',
+    ],
+    'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',
+    'DEFAULT_THROTTLE_CLASSES': [
+        'rest_framework.throttling.AnonRateThrottle',
+        'rest_framework.throttling.UserRateThrottle'
+    ],
+    'DEFAULT_THROTTLE_RATES': {
+        'anon': '100/hour',  # More generous limit for anonymous users
+        'user': '1000/hour',# Higher limit for authenticated users
+        'login': '5/minute',
+        
+    }
+}
+
 DJOSER = {
     'USER_ID_FIELD': 'id',
     'LOGIN_FIELD': 'phone',
@@ -172,13 +183,21 @@ DJOSER = {
         'user_list': ['rest_framework.permissions.IsAdminUser'],
     },
     'HIDE_USERS': False,
+    
+    'DEFAULT_THROTTLE_RATES': {
+        'login': '5/minute',  # Adjust as needed
+    }
 }
+
 
 # SimpleJWT settings
 SIMPLE_JWT = {
     'AUTH_HEADER_TYPES': ('JWT',),
     'ACCESS_TOKEN_LIFETIME': timedelta(hours=1),
     'REFRESH_TOKEN_LIFETIME': timedelta(days=1),
+    'TOKEN_OBTAIN_SERIALIZER': 'core.serializers.CustomTokenObtainPairSerializer',
+    'ROTATE_REFRESH_TOKENS': True,
+    'BLACKLIST_AFTER_ROTATION': True,  # Add this to ensure refresh tokens are blacklisted
 }
 
 SPECTACULAR_SETTINGS = {
