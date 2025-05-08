@@ -2,30 +2,39 @@ from django.db import models
 from django.contrib.auth.models import AbstractBaseUser, BaseUserManager, PermissionsMixin
 from django.core.validators import MinValueValidator, MaxValueValidator
 from django.utils import timezone
+from django.contrib.auth.hashers import make_password, is_password_usable
 
 
 class CustomUserManager(BaseUserManager):
-    def create_user(self, username, email, password=None, **extra_fields):
-        if not email:
-            raise ValueError('Email is required')
-        if not username:
-            raise ValueError('Username is required')
+    def create_user(self, phone, first_name, middle_name, last_name, password=None, **extra_fields):
+        if not phone:
+            raise ValueError('Phone number is required')
+        if not first_name:
+            raise ValueError('First name is required')
+        if not middle_name:  # New validation
+            raise ValueError('Middle name is required')
+        if not last_name:
+            raise ValueError('Last name is required')
         
-        email = self.normalize_email(email)
-        user = self.model(username=username, email=email, **extra_fields)
+        user = self.model(
+            phone=phone,
+            first_name=first_name,
+            middle_name=middle_name,  # Now required
+            last_name=last_name,
+            **extra_fields
+        )
         user.set_password(password)
         user.save(using=self._db)
         return user
     
-    def create_superuser(self, username, email, password=None, **extra_fields):
+    def create_superuser(self, phone, first_name, middle_name, last_name, password=None, **extra_fields):
         extra_fields.setdefault('is_staff', True)
         extra_fields.setdefault('is_superuser', True)
         extra_fields.setdefault('is_active', True)
         extra_fields.setdefault('user_type', 'admin')
         
-        return self.create_user(username, email, password, **extra_fields)
-
-
+        return self.create_user(phone, first_name, middle_name, last_name, password, **extra_fields)
+    
 class User(AbstractBaseUser, PermissionsMixin):
     USER_TYPE_CHOICES = (
         ('student', 'Student'),
@@ -34,24 +43,37 @@ class User(AbstractBaseUser, PermissionsMixin):
         ('admin', 'Admin')
     )
     
-    username = models.CharField(max_length=150, unique=True)
-    email = models.EmailField(unique=True)
-    phone = models.CharField(max_length=20, blank=True, null=True)
+    # Personal Info
+    first_name = models.CharField(max_length=150)  # Removed blank/null
+    middle_name = models.CharField(max_length=150)  # Removed blank/null, now required
+    last_name = models.CharField(max_length=150)  # Removed blank/null
+    
+    # Authentication Info
+    phone = models.CharField(max_length=20, unique=True)
+    
+    # Role and Permissions
     user_type = models.CharField(max_length=10, choices=USER_TYPE_CHOICES)
     is_active = models.BooleanField(default=True)
     is_staff = models.BooleanField(default=False)
+    
+    # Timestamps
     last_login = models.DateTimeField(null=True, blank=True)
     date_joined = models.DateTimeField(auto_now_add=True)
     
     objects = CustomUserManager()
     
-    USERNAME_FIELD = 'username'
-    EMAIL_FIELD = 'email'
-    REQUIRED_FIELDS = ['email']
+    USERNAME_FIELD = 'phone'
+    REQUIRED_FIELDS = ['first_name', 'middle_name', 'last_name']
     
     def __str__(self):
-        return self.username
-
+        return f"{self.first_name} {self.last_name} ({self.phone})"
+    
+    def get_full_name(self):
+        names = [self.first_name, self.middle_name, self.last_name]
+        return ' '.join(filter(None, names)).strip()
+    
+    def get_short_name(self):
+        return self.first_name
 
 class SecurityQuestion(models.Model):
     LANGUAGE_CHOICES = (
@@ -67,10 +89,23 @@ class SecurityQuestion(models.Model):
 
 
 class SecurityAnswer(models.Model):
-    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='security_answers')
+    user = models.ForeignKey(User, on_delete=models.CASCADE)
     question = models.ForeignKey(SecurityQuestion, on_delete=models.CASCADE)
     answer_hash = models.CharField(max_length=255)
-    
+
+    def set_answer(self, plain_answer):
+        self.answer_hash = make_password(plain_answer)
+
+    def check_answer(self, plain_answer):
+        from django.contrib.auth.hashers import check_password
+        return check_password(plain_answer, self.answer_hash)
+
+    def save(self, *args, **kwargs):
+        # Only validate if answer_hash is not empty
+        if self.answer_hash and not is_password_usable(self.answer_hash):
+            raise ValueError("Answers must be hashed using set_answer() method")
+        super().save(*args, **kwargs)
+        
     class Meta:
         unique_together = ('user', 'question')
     
@@ -95,21 +130,18 @@ class Interest(models.Model):
 class Profile(models.Model):
     GENDER_CHOICES = (
         ('male', 'Male'),
-        ('female', 'Female'),
-        ('other', 'Other')
+        ('female', 'Female')
     )
     
     user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='profile')
-    full_name = models.CharField(max_length=255)
-    birth_date = models.DateField()
-    gender = models.CharField(max_length=10, choices=GENDER_CHOICES)
-    national_id = models.CharField(max_length=20)
-    address = models.TextField()
-    interests = models.ManyToManyField(Interest, through='ProfileInterest')
+    birth_date = models.DateField(blank=True, null=True)  # Made optional
+    gender = models.CharField(max_length=10, choices=GENDER_CHOICES, default='other')
+    national_id = models.CharField(max_length=20, blank=True, null=True)  # Optional
+    address = models.TextField(blank=True, null=True)  # Optional
+    interests = models.ManyToManyField(Interest, through='ProfileInterest', blank=True)
     
     def __str__(self):
-        return self.full_name
-
+        return self.user.get_full_name() or str(self.user)
 
 class ProfileInterest(models.Model):
     profile = models.ForeignKey(Profile, on_delete=models.CASCADE)
@@ -120,7 +152,7 @@ class ProfileInterest(models.Model):
         unique_together = ('profile', 'interest')
     
     def __str__(self):
-        return f"{self.profile.full_name} - {self.interest.name} ({self.intensity})"
+        return f"{self.profile.user.get_full_name} - {self.interest.name} ({self.intensity})"
 
 
 class EWallet(models.Model):
@@ -129,7 +161,7 @@ class EWallet(models.Model):
     last_updated = models.DateTimeField(auto_now=True)
     
     def __str__(self):
-        return f"Wallet for {self.user.username}"
+        return f"Wallet for {self.user.get_full_name}"
 
 
 class DepositMethod(models.Model):
@@ -183,4 +215,4 @@ class DepositRequest(models.Model):
     wallet = models.ForeignKey(EWallet, on_delete=models.CASCADE, related_name='deposit_requests')
     
     def __str__(self):
-        return f"{self.user.username} - {self.amount} ({self.get_status_display()})" 
+        return f"{self.user.get_full_name} - {self.amount} ({self.get_status_display()})" 

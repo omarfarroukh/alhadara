@@ -158,11 +158,20 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 DJOSER = {
     'USER_ID_FIELD': 'id',
-    'LOGIN_FIELD': 'username',
+    'LOGIN_FIELD': 'phone',
     'PASSWORD_RESET_CONFIRM_URL': 'password/reset/confirm/{uid}/{token}',
     'ACTIVATION_URL': 'activate/{uid}/{token}',
-    'SEND_ACTIVATION_EMAIL': True,
-    'SERIALIZERS': {},
+    'SEND_ACTIVATION_EMAIL': False,
+    'SERIALIZERS': {
+        'user_create': 'core.serializers.CustomUserCreateSerializer',  # Updated serializer
+        'user': 'core.serializers.CustomUserSerializer',
+        'current_user': 'core.serializers.CustomUserSerializer',
+    },
+    'PERMISSIONS': {
+        'user': ['rest_framework.permissions.IsAuthenticated'],
+        'user_list': ['rest_framework.permissions.IsAdminUser'],
+    },
+    'HIDE_USERS': False,
 }
 
 # SimpleJWT settings

@@ -1,5 +1,7 @@
 from rest_framework import serializers
-from djoser.serializers import UserCreateSerializer, UserSerializer
+from django.contrib.auth.hashers import make_password, identify_hasher
+from rest_framework_simplejwt.tokens import RefreshToken
+from djoser.serializers import UserCreateSerializer as BaseUserCreateSerializer, UserSerializer
 from .models import (
     User, SecurityQuestion, SecurityAnswer, Interest, 
     Profile, ProfileInterest, EWallet, DepositMethod,
@@ -7,17 +9,32 @@ from .models import (
 )
 
 
-class CustomUserCreateSerializer(UserCreateSerializer):
-    class Meta(UserCreateSerializer.Meta):
+class CustomUserCreateSerializer(BaseUserCreateSerializer):
+    access = serializers.SerializerMethodField(read_only=True)
+    refresh = serializers.SerializerMethodField(read_only=True)
+
+    class Meta(BaseUserCreateSerializer.Meta):
         model = User
-        fields = ('id', 'username', 'email', 'password', 'phone', 'user_type')
+        fields = ('id', 'phone', 'password', 'first_name', 'middle_name', 
+                'last_name', 'user_type', 'access', 'refresh')
+        extra_kwargs = {
+            'password': {'write_only': True},
+            'first_name': {'required': True},
+            'middle_name': {'required': True},
+            'last_name': {'required': True},
+        }
 
+    def get_access(self, obj):
+        refresh = RefreshToken.for_user(obj)
+        return str(refresh.access_token)
 
+    def get_refresh(self, obj):
+        refresh = RefreshToken.for_user(obj)
+        return str(refresh)
 class CustomUserSerializer(UserSerializer):
     class Meta(UserSerializer.Meta):
         model = User
-        fields = ('id', 'username', 'email', 'phone', 'user_type', 'is_active', 'last_login')
-
+        fields = ('id', 'phone', 'first_name', 'middle_name', 'last_name', 'user_type', 'is_active', 'last_login')
 
 class SecurityQuestionSerializer(serializers.ModelSerializer):
     class Meta:
@@ -26,16 +43,33 @@ class SecurityQuestionSerializer(serializers.ModelSerializer):
 
 
 class SecurityAnswerSerializer(serializers.ModelSerializer):
+    # Add a write-only field for the plain text answer
+    answer = serializers.CharField(write_only=True)
+    
     class Meta:
         model = SecurityAnswer
-        fields = ('id', 'user', 'question', 'answer_hash')
-        read_only_fields = ('user',)
-
+        fields = ('id', 'user', 'question', 'answer_hash', 'answer')
+        read_only_fields = ('user', 'answer_hash')  # answer_hash is now read-only
+   
+        
     def create(self, validated_data):
+        # Get the plain text answer from input
+        plain_answer = validated_data.pop('answer')
+        
+        # Hash the answer and store it
+        validated_data['answer_hash'] = make_password(plain_answer)
+        
+        # Set the current user
         validated_data['user'] = self.context['request'].user
+        
         return super().create(validated_data)
 
-
+    def update(self, instance, validated_data):
+        if 'answer' in validated_data:
+            plain_answer = validated_data.pop('answer')
+            instance.answer_hash = make_password(plain_answer)
+        return super().update(instance, validated_data)
+       
 class InterestSerializer(serializers.ModelSerializer):
     class Meta:
         model = Interest
@@ -57,7 +91,7 @@ class ProfileSerializer(serializers.ModelSerializer):
     class Meta:
         model = Profile
         fields = (
-            'id', 'full_name', 'birth_date', 'gender', 
+            'id', 'birth_date', 'gender', 
             'national_id', 'address', 'interests'
         )
 
