@@ -1,0 +1,329 @@
+from rest_framework import serializers
+from django.contrib.auth.hashers import make_password, identify_hasher
+from rest_framework_simplejwt.tokens import RefreshToken
+from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
+from djoser.serializers import UserCreateSerializer as BaseUserCreateSerializer, UserSerializer
+from .models import (
+    User, SecurityQuestion, SecurityAnswer, Interest, 
+    Profile, ProfileInterest, EWallet, DepositMethod,
+    BankTransferInfo, MoneyTransferInfo, DepositRequest
+)
+from django.core.exceptions import ValidationError
+from django.contrib.auth.password_validation import validate_password
+import re
+from django.contrib.auth import get_user_model
+
+User = get_user_model()
+
+def validate_password_strength(value):
+    """
+    Validate password meets strong requirements (consistent across all serializers)
+    """
+    try:
+        # Use Django's built-in password validation
+        validate_password(value)
+    except ValidationError as e:
+        raise serializers.ValidationError(list(e.messages))
+
+    # Additional custom validation
+    if len(value) < 8:  # Consistent length requirement
+        raise serializers.ValidationError("Password must be at least 12 characters long")
+    
+    if not re.search(r'[A-Z]', value):
+        raise serializers.ValidationError("Password must contain at least one uppercase letter")
+        
+    if not re.search(r'[a-z]', value):
+        raise serializers.ValidationError("Password must contain at least one lowercase letter")
+        
+    if not re.search(r'[0-9]', value):
+        raise serializers.ValidationError("Password must contain at least one digit")
+        
+    if not re.search(r'[^A-Za-z0-9]', value):
+        raise serializers.ValidationError("Password must contain at least one special character")
+
+    return value
+
+class CustomUserCreateSerializer(serializers.ModelSerializer):
+    access = serializers.SerializerMethodField(read_only=True)
+    refresh = serializers.SerializerMethodField(read_only=True)
+    confirm_password = serializers.CharField(write_only=True, required=True)
+
+    class Meta:
+        model = User
+        fields = ('id', 'phone', 'password', 'confirm_password', 'first_name', 
+                'middle_name', 'last_name', 'user_type', 'access', 'refresh')
+        extra_kwargs = {
+            'password': {
+                'write_only': True,
+                'required': True,
+                'style': {'input_type': 'password'}
+            },
+            'first_name': {'required': True},
+            'middle_name': {'required': True},
+            'last_name': {'required': True},
+        }
+
+    def validate_password(self, value):
+        """
+        Validate password meets strong requirements
+        """
+        return validate_password_strength(value)
+    
+    def validate(self, data):
+        """
+        Check that passwords match
+        """
+        if data['password'] != data['confirm_password']:
+            raise serializers.ValidationError({"confirm_password": "Passwords do not match"})
+        return data
+
+    def create(self, validated_data):
+        """
+        Create user with validated data
+        """
+        validated_data.pop('confirm_password')
+        user = User.objects.create_user(
+            phone=validated_data['phone'],
+            password=validated_data['password'],
+            first_name=validated_data['first_name'],
+            middle_name=validated_data['middle_name'],
+            last_name=validated_data['last_name'],
+            user_type=validated_data.get('user_type', 'regular')  # default to 'regular' if not specified
+        )
+        return user
+
+    def get_access(self, obj):
+        refresh = RefreshToken.for_user(obj)
+        return str(refresh.access_token)
+
+    def get_refresh(self, obj):
+        refresh = RefreshToken.for_user(obj)
+        return str(refresh)
+    
+class CustomUserSerializer(UserSerializer):
+    class Meta(UserSerializer.Meta):
+        model = User
+        fields = ('id', 'phone', 'first_name', 'middle_name', 'last_name', 'user_type', 'is_active', 'last_login')
+        extra_kwargs = {
+            'phone': {
+                'error_messages': {
+                    'invalid': 'Please enter a valid Syrian phone number (09XXXXXXXX or +9639XXXXXXXX)'
+                }
+            }
+        }
+        
+class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
+    @classmethod
+    def get_token(cls, user):
+        token = super().get_token(user)
+        # Add custom claims
+        token['user_type'] = user.user_type
+        return token
+class SecurityQuestionSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = SecurityQuestion
+        fields = ('id', 'question_text', 'language')
+
+class SecurityAnswerSerializer(serializers.ModelSerializer):
+    # Add a write-only field for the plain text answer
+    answer = serializers.CharField(write_only=True)
+    
+    class Meta:
+        model = SecurityAnswer
+        fields = ('id', 'user', 'question', 'answer_hash', 'answer')
+        read_only_fields = ('user', 'answer_hash')  # answer_hash is now read-only
+   
+        
+    def create(self, validated_data):
+        # Get the plain text answer from input
+        plain_answer = validated_data.pop('answer')
+        
+        # Hash the answer and store it
+        validated_data['answer_hash'] = make_password(plain_answer)
+        
+        # Set the current user
+        validated_data['user'] = self.context['request'].user
+        
+        return super().create(validated_data)
+
+    def update(self, instance, validated_data):
+        if 'answer' in validated_data:
+            plain_answer = validated_data.pop('answer')
+            instance.answer_hash = make_password(plain_answer)
+        return super().update(instance, validated_data)
+
+class PasswordResetRequestSerializer(serializers.Serializer):
+    phone = serializers.CharField(
+        required=True,
+        help_text="Registered phone number",
+        max_length=20,
+        error_messages={
+            "required": "Phone number is required",
+            "max_length": "Phone number must not exceed 20 characters"
+        }
+    )
+
+    def validate_phone(self, value):
+        if not User.objects.filter(phone=value).exists():
+            raise serializers.ValidationError("No user registered with this number")
+        return value
+class SecurityAnswerValidationSerializer(serializers.Serializer):
+    phone = serializers.CharField(
+        required=True,
+        help_text="Phone number used in first step"
+    )
+    question_id = serializers.IntegerField(
+        required=True,
+        help_text="ID of the selected security question",
+        min_value=1,
+        error_messages={
+            "min_value": "Question ID must be a positive number"
+        }
+    )
+    answer = serializers.CharField(
+        required=True,
+        help_text="User's answer to the security question",
+        trim_whitespace=False
+    )
+
+    def validate(self, data):
+        try:
+            user = User.objects.get(phone=data['phone'])
+            question = SecurityQuestion.objects.get(id=data['question_id'])
+            security_answer = user.securityanswer_set.get(question=question)
+            
+            if not security_answer.check_answer(data['answer']):
+                raise serializers.ValidationError(
+                    {"answer": "Incorrect answer"}
+                )
+                
+        except User.DoesNotExist:
+            raise serializers.ValidationError(
+                {"phone": "Phone number not registered"}
+            )
+        except SecurityQuestion.DoesNotExist:
+            raise serializers.ValidationError(
+                {"question_id": "Question not found"}
+            )
+        except:
+            raise serializers.ValidationError(
+                {"answer": "No matching security question found"}
+            )
+            
+        return data
+class NewPasswordSerializer(serializers.Serializer):
+    reset_token = serializers.CharField(
+        required=True,
+        help_text="Temporary token received from step 2",
+        min_length=10,
+        error_messages={
+            "min_length": "Invalid token"
+        }
+    )
+    new_password = serializers.CharField(
+        required=True,
+        help_text="New password",
+        min_length=8,
+        max_length=128,
+        write_only=True,
+        error_messages={
+            "min_length": "Password must be at least 8 characters",
+            "max_length": "Password must not exceed 128 characters"
+        }
+    )
+    confirm_password = serializers.CharField(
+        required=True,
+        help_text="Confirm new password",
+        min_length=8,
+        max_length=128,
+        write_only=True,
+        error_messages={
+            "min_length": "Password must be at least 8 characters",
+            "max_length": "Password must not exceed 128 characters"
+        }
+    )
+
+    def validate(self, data):
+            if data['new_password'] != data['confirm_password']:
+                raise serializers.ValidationError(
+                    {"confirm_password": "Passwords do not match"}
+                )
+            try:
+                validate_password_strength(data['new_password'])
+            except serializers.ValidationError as e:
+                raise serializers.ValidationError({"new_password": e.detail})
+                
+            return data        
+        
+class InterestSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Interest
+        fields = ('id', 'name', 'category')
+
+
+class ProfileInterestSerializer(serializers.ModelSerializer):
+    interest_name = serializers.ReadOnlyField(source='interest.name')
+    interest_category = serializers.ReadOnlyField(source='interest.category')
+    
+    class Meta:
+        model = ProfileInterest
+        fields = ('interest', 'interest_name', 'interest_category', 'intensity')
+
+class ProfileSerializer(serializers.ModelSerializer):
+    interests = ProfileInterestSerializer(source='profileinterest_set', many=True, read_only=True)
+    
+    class Meta:
+        model = Profile
+        fields = (
+            'id', 'birth_date', 'gender', 
+            'national_id', 'address', 'interests'
+        )
+
+class ProfileDetailSerializer(ProfileSerializer):
+    user = CustomUserSerializer(read_only=True)
+    
+    class Meta(ProfileSerializer.Meta):
+        fields = ProfileSerializer.Meta.fields + ('user',)
+
+class EWalletSerializer(serializers.ModelSerializer):
+    user_username = serializers.ReadOnlyField(source='user.username')
+    
+    class Meta:
+        model = EWallet
+        fields = ('id', 'user', 'user_username', 'current_balance', 'last_updated')
+        read_only_fields = ('user', 'current_balance', 'last_updated')
+
+class BankTransferInfoSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = BankTransferInfo
+        fields = ('id', 'deposit_method', 'account_name', 'account_number', 'bank_name', 'iban')
+
+class MoneyTransferInfoSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = MoneyTransferInfo
+        fields = ('id', 'deposit_method', 'company_name', 'receiver_name', 'receiver_phone')
+
+class DepositMethodSerializer(serializers.ModelSerializer):
+    bank_info = BankTransferInfoSerializer(many=True, read_only=True)
+    transfer_info = MoneyTransferInfoSerializer(many=True, read_only=True)
+    
+    class Meta:
+        model = DepositMethod
+        fields = ('id', 'name', 'is_active', 'bank_info', 'transfer_info')
+
+class DepositRequestSerializer(serializers.ModelSerializer):
+    user_username = serializers.ReadOnlyField(source='user.username')
+    deposit_method_name = serializers.ReadOnlyField(source='deposit_method.get_name_display')
+    
+    class Meta:
+        model = DepositRequest
+        fields = (
+            'id', 'user', 'user_username', 'deposit_method', 'deposit_method_name',
+            'transaction_number', 'amount', 'screenshot_path', 'status', 'created_at',
+            'wallet'
+        )
+        read_only_fields = ('user', 'status', 'created_at')
+    
+    def create(self, validated_data):
+        validated_data['user'] = self.context['request'].user
+        return super().create(validated_data)
