@@ -13,11 +13,6 @@ class Department(models.Model):
 
 
 class CourseType(models.Model):
-    CATEGORY_CHOICES = (
-        ('core', 'Core'),
-        ('elective', 'Elective'),
-        ('workshop', 'Workshop')
-    )
     
     name = models.CharField(max_length=100, unique=True)
     department = models.ForeignKey(Department, on_delete=models.CASCADE, related_name='course_types')

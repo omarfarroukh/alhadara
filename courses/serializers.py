@@ -19,7 +19,7 @@ class CourseTypeSerializer(serializers.ModelSerializer):
     
     class Meta:
         model = CourseType
-        fields = ('id', 'name', 'category', 'department', 'department_name')
+        fields = ('id', 'name', 'department', 'department_name')
 
 
 class CourseSerializer(serializers.ModelSerializer):
@@ -33,7 +33,7 @@ class CourseSerializer(serializers.ModelSerializer):
             'id', 'title', 'description', 'price', 'duration', 
             'max_students', 'certification_eligible', 'department', 
             'department_name', 'course_type', 'course_type_name', 'teacher',
-            'teacher_name'
+            'teacher_name','category'
         )
 
 
