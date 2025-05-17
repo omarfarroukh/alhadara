@@ -1,6 +1,7 @@
 from rest_framework import viewsets, permissions, filters, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
+from rest_framework import serializers
 from .models import Department, CourseType, Course, Hall, ScheduleSlot, Booking
 from .serializers import (
     DepartmentSerializer, CourseTypeSerializer, CourseSerializer,
@@ -8,7 +9,7 @@ from .serializers import (
 )
 from django.db.models import Q
 from core.permissions import IsOwnerOrAdmin,IsStudent,IsTeacher,IsReception,IsAdmin
-from django.db.models import Q
+from django_filters.rest_framework import DjangoFilterBackend
 
 class DepartmentViewSet(viewsets.ModelViewSet):
     queryset = Department.objects.all()
@@ -29,9 +30,10 @@ class DepartmentViewSet(viewsets.ModelViewSet):
         return Response(serializer.data, status=status.HTTP_201_CREATED)
     
 class CourseTypeViewSet(viewsets.ModelViewSet):
-    queryset = CourseType.objects.all()
+    queryset = CourseType.objects.all().select_related('department')
     serializer_class = CourseTypeSerializer
-    filter_backends = [filters.SearchFilter, filters.OrderingFilter]
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    filterset_fields = ['department']  # Auto-Swagger docs
     search_fields = ['name']
     ordering_fields = ['name']
     
@@ -40,47 +42,117 @@ class CourseTypeViewSet(viewsets.ModelViewSet):
             return [IsReception()]
         return [permissions.AllowAny()]
     
-    def get_queryset(self):
-        queryset = CourseType.objects.all()
-        department_id = self.request.query_params.get('department', None)
+    def list(self, request, *args, **kwargs):
+        department_id = request.query_params.get('department')
+        
+        # Validate department_id if present
         if department_id:
-            queryset = queryset.filter(department_id=department_id)
-        return queryset
+            try:
+                department_id = int(department_id)
+            except (ValueError, TypeError):
+                return Response(
+                    {'error': 'Invalid department ID. Must be an integer.'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Get filtered queryset
+            queryset = self.filter_queryset(self.get_queryset())
+            
+            if not queryset.exists():
+                return Response(
+                    {'message': 'No course types found for this department'},
+                    status=status.HTTP_200_OK
+                )
+        
+        return super().list(request, *args, **kwargs)
 
+
+from rest_framework.response import Response
+from rest_framework import status
 
 class CourseViewSet(viewsets.ModelViewSet):
-    queryset = Course.objects.all()
+    queryset = Course.objects.all().select_related('course_type')
     serializer_class = CourseSerializer
-    filter_backends = [filters.SearchFilter, filters.OrderingFilter]
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    filterset_fields = ['course_type']
     search_fields = ['title', 'description']
-    ordering_fields = ['title', 'price', 'duration','category']
+    ordering_fields = ['title', 'price', 'duration', 'category']
     
     def get_permissions(self):
         if self.action in ['create', 'update', 'partial_update', 'destroy']:
             return [IsReception()]
         return [permissions.AllowAny()]
     
+    def list(self, request, *args, **kwargs):
+        # Validate parameters
+        if errors := self._validate_filters(request):
+            return Response(
+                {'error': 'Invalid filters', 'details': errors},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        queryset = self.filter_queryset(self.get_queryset())
+        
+        if not queryset.exists():  # Check for empty results in all cases
+            return Response(
+                {'message': 'No courses available'},  # Generic message
+                status=status.HTTP_200_OK
+            )
+        
+        return super().list(request, *args, **kwargs)
+    
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        
+        # Additional validation
+        department = serializer.validated_data.get('department')
+        course_type = serializer.validated_data.get('course_type')
+        
+        if course_type.department != department:
+            return Response(
+                {"error": "Course type must belong to the selected department"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        self.perform_create(serializer)
+        headers = self.get_success_headers(serializer.data)
+        return Response(serializer.data, status=status.HTTP_201_CREATED, headers=headers)
+    
+    def _validate_filters(self, request):
+        """Centralized filter validation"""
+        errors = {}
+        params = request.query_params
+        
+        if department_id := params.get('department'):
+            if not department_id.isdigit():
+                errors['department'] = 'Must be an integer'
+        
+        if course_type_id := params.get('course_type'):
+            if not course_type_id.isdigit():
+                errors['course_type'] = 'Must be an integer'
+        
+        if teacher_id := params.get('teacher'):
+            if not teacher_id.isdigit():
+                errors['teacher'] = 'Must be an integer'
+        
+        return errors
+    
     def get_queryset(self):
         queryset = super().get_queryset()
+        params = self.request.query_params
         
-        # Get filter parameters from request
-        department_id = self.request.query_params.get('department')
-        course_type_id = self.request.query_params.get('course_type')
-        teacher_id = self.request.query_params.get('teacher')
-        certification = self.request.query_params.get('certification')
-        category = self.request.query_params.get('category')  # New parameter
-        
-        # Apply filters
-        if department_id:
-            queryset = queryset.filter(department_id=department_id)
-        if course_type_id:
-            queryset = queryset.filter(course_type_id=course_type_id)
-        if teacher_id:
-            queryset = queryset.filter(teacher_id=teacher_id)
-        if certification:
+        # Apply all filters
+        if department_id := params.get('department'):
+            queryset = queryset.filter(department_id=int(department_id))
+        if course_type_id := params.get('course_type'):
+            queryset = queryset.filter(course_type_id=int(course_type_id))
+        if teacher_id := params.get('teacher'):
+            queryset = queryset.filter(teacher_id=int(teacher_id))
+        if certification := params.get('certification'):
             queryset = queryset.filter(certification_eligible=(certification.lower() == 'true'))
-        if category:  
-            queryset = queryset.filter(category=category.lower())
+        if category := params.get('category'):
+            queryset = queryset.filter(category__iexact=category.lower())
         
         return queryset
 
@@ -97,11 +169,19 @@ class HallViewSet(viewsets.ModelViewSet):
         return [permissions.AllowAny()]
 
 
+from rest_framework.response import Response
+from rest_framework import status
+from django.db.models import Q
+
 class ScheduleSlotViewSet(viewsets.ModelViewSet):
-    queryset = ScheduleSlot.objects.all()
+    queryset = ScheduleSlot.objects.all().select_related('course', 'hall')
     serializer_class = ScheduleSlotSerializer
-    filter_backends = [filters.OrderingFilter]
-    ordering_fields = ['day_of_week', 'start_time']
+    filter_backends = [filters.OrderingFilter, DjangoFilterBackend, filters.SearchFilter]
+    filterset_fields = {
+        'course': ['exact']
+    }
+    search_fields = ['course__title', 'hall__name']
+    ordering_fields = ['start_time', 'end_time', 'valid_from', 'valid_until']
     
     def get_permissions(self):
         if self.action in ['create', 'update', 'partial_update', 'destroy']:
@@ -109,20 +189,52 @@ class ScheduleSlotViewSet(viewsets.ModelViewSet):
         return [permissions.AllowAny()]
     
     def get_queryset(self):
-        queryset = ScheduleSlot.objects.all()
-        course_id = self.request.query_params.get('course', None)
-        hall_id = self.request.query_params.get('hall', None)
-        day = self.request.query_params.get('day', None)
+        queryset = super().get_queryset()
+        params = self.request.query_params
         
-        if course_id:
-            queryset = queryset.filter(course_id=course_id)
-        if hall_id:
-            queryset = queryset.filter(hall_id=hall_id)
-        if day:
-            queryset = queryset.filter(day_of_week=day)
+        # Day filtering (array containment)
+        if day := params.get('day'):
+            queryset = queryset.filter(days_of_week__contains=[day.lower()])
         
-        return queryset
-
+        # Active on specific date
+        if active_date := params.get('active_on'):
+            queryset = queryset.filter(
+                Q(valid_from__lte=active_date) &
+                (Q(valid_until__gte=active_date) | Q(valid_until__isnull=True)))
+        
+        # Time window filtering
+        if start := params.get('start_time'):
+            queryset = queryset.filter(end_time__gt=start)
+        if end := params.get('end_time'):
+            queryset = queryset.filter(start_time__lt=end)
+        
+        # Department filtering
+        if dept_id := params.get('department'):
+            queryset = queryset.filter(
+                Q(course__department_id=dept_id) |
+                Q(hall__department_id=dept_id))
+        
+        return queryset.distinct()
+    
+    def create(self, request, *args, **kwargs):
+        try:
+            return super().create(request, *args, **kwargs)
+        except serializers.ValidationError as e:
+            return Response(
+                {'error': 'Validation failed', 'details': e.detail},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+    
+    def list(self, request, *args, **kwargs):
+        # Early return for empty queryset
+        queryset = self.filter_queryset(self.get_queryset())
+        if not queryset.exists():
+            return Response(
+                {'message': 'No schedule slots found matching your criteria'},
+                status=status.HTTP_200_OK
+            )
+        
+        return super().list(request, *args, **kwargs)
 
 class BookingViewSet(viewsets.ModelViewSet):
     serializer_class = BookingSerializer # Allow anyone to access

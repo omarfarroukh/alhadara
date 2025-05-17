@@ -1,6 +1,6 @@
 from django.db import models
 from core.models import User
-
+from django.core.validators import MinValueValidator
 
 class Department(models.Model):
     name = models.CharField(max_length=100, unique=True)
@@ -18,7 +18,7 @@ class CourseType(models.Model):
     department = models.ForeignKey(Department, on_delete=models.CASCADE, related_name='course_types')
     
     def __str__(self):
-        return f"{self.name} ({self.get_category_display()})"
+        return f"{self.name}"
 
 
 class Course(models.Model):
@@ -29,9 +29,17 @@ class Course(models.Model):
     
     title = models.CharField(max_length=200)
     description = models.TextField()
-    price = models.DecimalField(max_digits=10, decimal_places=2)
+    price = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        validators=[MinValueValidator(0.01)],
+        help_text="Must be at least 0.01"
+    )
     duration = models.IntegerField(help_text="Duration in hours")
-    max_students = models.IntegerField()
+    max_students = models.PositiveIntegerField(
+        validators=[MinValueValidator(1)],
+        help_text="Must be at least 1"
+    )
     certification_eligible = models.BooleanField(default=False)
     category = models.CharField(max_length=10, choices=CATEGORY_CHOICES)
     department = models.ForeignKey(Department, on_delete=models.CASCADE, related_name='courses')
@@ -44,9 +52,17 @@ class Course(models.Model):
 
 class Hall(models.Model):
     name = models.CharField(max_length=100, unique=True)
-    capacity = models.IntegerField()
+    capacity = models.PositiveIntegerField(
+        validators=[MinValueValidator(1)],
+        help_text="Must be at least 1"
+    )
     location = models.CharField(max_length=255)
-    hourly_rate = models.DecimalField(max_digits=8, decimal_places=2)
+    hourly_rate = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        validators=[MinValueValidator(0.01)],
+        help_text="Must be at least 0.01"
+    )
     
     def __str__(self):
         return f"{self.name} ({self.location})"
@@ -85,6 +101,11 @@ class ScheduleSlot(models.Model):
                 fields=['hall', 'days_of_week', 'start_time'],
                 name='unique_hall_schedule_per_day_time'
             ),
+            models.CheckConstraint(
+                check=models.Q(valid_until__gte=models.F('valid_from')) | 
+                     models.Q(valid_until__isnull=True),
+                name='valid_until_after_valid_from'
+            )
         ]
 
 class Booking(models.Model):
