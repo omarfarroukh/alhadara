@@ -165,7 +165,6 @@ REST_FRAMEWORK = {
         'anon': '100/hour',  # More generous limit for anonymous users
         'user': '1000/hour',# Higher limit for authenticated users
         'login': '5/minute',
-        
     }
 }
 

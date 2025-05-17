@@ -9,15 +9,15 @@ class DepartmentAdmin(admin.ModelAdmin):
 
 @admin.register(CourseType)
 class CourseTypeAdmin(admin.ModelAdmin):
-    list_display = ('name', 'category', 'department')
-    list_filter = ('category', 'department')
-    search_fields = ('name',)
+    list_display = ('name', 'department')
+    list_filter = ['department']
+    search_fields = ['name']
 
 @admin.register(Course)
 class CourseAdmin(admin.ModelAdmin):
     list_display = ('title', 'department', 'course_type', 'price', 'teacher')
-    list_filter = ('department', 'course_type', 'certification_eligible')
-    search_fields = ('title', 'teacher__username')
+    list_filter = ('department', 'course_type', 'certification_eligible','category')
+    search_fields = ('title', 'teacher__username','category')
 
 @admin.register(Hall)
 class HallAdmin(admin.ModelAdmin):

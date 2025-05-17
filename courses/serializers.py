@@ -7,6 +7,11 @@ class DepartmentSerializer(serializers.ModelSerializer):
     class Meta:
         model = Department
         fields = ('id', 'name', 'description')
+        
+    def validate_name(self, value):
+        if len(value) < 2:
+            raise serializers.ValidationError("Name must be at least 2 characters long.")
+        return value
 
 
 class CourseTypeSerializer(serializers.ModelSerializer):

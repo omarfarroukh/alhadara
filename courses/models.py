@@ -4,10 +4,12 @@ from core.models import User
 
 class Department(models.Model):
     name = models.CharField(max_length=100, unique=True)
-    description = models.TextField()
+    description = models.TextField(blank=True, default='')
     
     def __str__(self):
         return f"{self.name}"
+    class Meta:
+        ordering = ['name']  
 
 
 class CourseType(models.Model):
@@ -18,7 +20,6 @@ class CourseType(models.Model):
     )
     
     name = models.CharField(max_length=100, unique=True)
-    category = models.CharField(max_length=10, choices=CATEGORY_CHOICES)
     department = models.ForeignKey(Department, on_delete=models.CASCADE, related_name='course_types')
     
     def __str__(self):
@@ -26,12 +27,18 @@ class CourseType(models.Model):
 
 
 class Course(models.Model):
+    CATEGORY_CHOICES = (
+        ('course', 'course'),
+        ('workshop', 'Workshop')
+    )
+    
     title = models.CharField(max_length=200)
     description = models.TextField()
     price = models.DecimalField(max_digits=10, decimal_places=2)
     duration = models.IntegerField(help_text="Duration in hours")
     max_students = models.IntegerField()
     certification_eligible = models.BooleanField(default=False)
+    category = models.CharField(max_length=10, choices=CATEGORY_CHOICES)
     department = models.ForeignKey(Department, on_delete=models.CASCADE, related_name='courses')
     course_type = models.ForeignKey(CourseType, on_delete=models.CASCADE, related_name='courses')
     teacher = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='taught_courses', limit_choices_to={'user_type': 'teacher'})
@@ -124,7 +131,7 @@ class Booking(models.Model):
         ordering = ['-start_datetime']
         constraints = [
             models.CheckConstraint(
-                check=models.Q(start_datetime__lt=models.F('end_datetime')),
+                condition=models.Q(start_datetime__lt=models.F('end_datetime')),
                 name='booking_start_before_end'
             ),
         ]

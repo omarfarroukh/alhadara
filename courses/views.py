@@ -7,35 +7,38 @@ from .serializers import (
     HallSerializer, ScheduleSlotSerializer, BookingSerializer
 )
 from django.db.models import Q
-from core.permissions import IsAdminUser, IsOwnerOrAdmin,IsStudent,IsTeacher,IsReception,IsAdmin
-from django.db import models
+from core.permissions import IsOwnerOrAdmin,IsStudent,IsTeacher,IsReception,IsAdmin
 from django.db.models import Q
 
 class DepartmentViewSet(viewsets.ModelViewSet):
     queryset = Department.objects.all()
     serializer_class = DepartmentSerializer
-    permission_classes = [permissions.IsAuthenticated]
     filter_backends = [filters.SearchFilter]
-    search_fields = ['name', 'code']
+    search_fields = ['name', 'description']
     
     def get_permissions(self):
         if self.action in ['create', 'update', 'partial_update', 'destroy']:
-            return [IsAdminUser()]
-        return [permissions.IsAuthenticated()]
-
-
+            return [IsReception()]
+        return [permissions.AllowAny()]
+    
+    @action(detail=False, methods=['post'])
+    def bulk(self, request):
+        serializer = self.get_serializer(data=request.data, many=True)
+        serializer.is_valid(raise_exception=True)
+        self.perform_create(serializer)
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
+    
 class CourseTypeViewSet(viewsets.ModelViewSet):
     queryset = CourseType.objects.all()
     serializer_class = CourseTypeSerializer
-    permission_classes = [permissions.IsAuthenticated]
     filter_backends = [filters.SearchFilter, filters.OrderingFilter]
     search_fields = ['name']
-    ordering_fields = ['name', 'category']
+    ordering_fields = ['name']
     
     def get_permissions(self):
         if self.action in ['create', 'update', 'partial_update', 'destroy']:
-            return [IsAdminUser()]
-        return [permissions.IsAuthenticated()]
+            return [IsReception()]
+        return [permissions.AllowAny()]
     
     def get_queryset(self):
         queryset = CourseType.objects.all()
@@ -48,23 +51,26 @@ class CourseTypeViewSet(viewsets.ModelViewSet):
 class CourseViewSet(viewsets.ModelViewSet):
     queryset = Course.objects.all()
     serializer_class = CourseSerializer
-    permission_classes = [permissions.IsAuthenticated]
     filter_backends = [filters.SearchFilter, filters.OrderingFilter]
     search_fields = ['title', 'description']
-    ordering_fields = ['title', 'price', 'duration']
+    ordering_fields = ['title', 'price', 'duration','category']
     
     def get_permissions(self):
         if self.action in ['create', 'update', 'partial_update', 'destroy']:
-            return [IsAdminUser()]
-        return [permissions.IsAuthenticated()]
+            return [IsReception()]
+        return [permissions.AllowAny()]
     
     def get_queryset(self):
-        queryset = Course.objects.all()
-        department_id = self.request.query_params.get('department', None)
-        course_type_id = self.request.query_params.get('course_type', None)
-        teacher_id = self.request.query_params.get('teacher', None)
-        certification = self.request.query_params.get('certification', None)
+        queryset = super().get_queryset()
         
+        # Get filter parameters from request
+        department_id = self.request.query_params.get('department')
+        course_type_id = self.request.query_params.get('course_type')
+        teacher_id = self.request.query_params.get('teacher')
+        certification = self.request.query_params.get('certification')
+        category = self.request.query_params.get('category')  # New parameter
+        
+        # Apply filters
         if department_id:
             queryset = queryset.filter(department_id=department_id)
         if course_type_id:
@@ -73,35 +79,34 @@ class CourseViewSet(viewsets.ModelViewSet):
             queryset = queryset.filter(teacher_id=teacher_id)
         if certification:
             queryset = queryset.filter(certification_eligible=(certification.lower() == 'true'))
+        if category:  
+            queryset = queryset.filter(category=category.lower())
         
         return queryset
-
 
 class HallViewSet(viewsets.ModelViewSet):
     queryset = Hall.objects.all()
     serializer_class = HallSerializer
-    permission_classes = [permissions.IsAuthenticated]
     filter_backends = [filters.SearchFilter, filters.OrderingFilter]
     search_fields = ['name', 'location']
     ordering_fields = ['name', 'capacity', 'hourly_rate']
     
     def get_permissions(self):
         if self.action in ['create', 'update', 'partial_update', 'destroy']:
-            return [IsAdminUser()]
-        return [permissions.IsAuthenticated()]
+            return [IsReception()]
+        return [permissions.AllowAny()]
 
 
 class ScheduleSlotViewSet(viewsets.ModelViewSet):
     queryset = ScheduleSlot.objects.all()
     serializer_class = ScheduleSlotSerializer
-    permission_classes = [permissions.IsAuthenticated]
     filter_backends = [filters.OrderingFilter]
     ordering_fields = ['day_of_week', 'start_time']
     
     def get_permissions(self):
         if self.action in ['create', 'update', 'partial_update', 'destroy']:
-            return [IsAdminUser()]
-        return [permissions.IsAuthenticated()]
+            return [IsReception()]
+        return [permissions.AllowAny()]
     
     def get_queryset(self):
         queryset = ScheduleSlot.objects.all()
@@ -120,20 +125,19 @@ class ScheduleSlotViewSet(viewsets.ModelViewSet):
 
 
 class BookingViewSet(viewsets.ModelViewSet):
-    serializer_class = BookingSerializer
-    permission_classes = [permissions.AllowAny]  # Allow anyone to access
+    serializer_class = BookingSerializer # Allow anyone to access
     filter_backends = [filters.OrderingFilter]
     ordering_fields = ['start_datetime', 'status']
     ordering = ['start_datetime']
     
     def get_permissions(self):
         if self.action in ['approve', 'destroy']:
-            return [IsAdminUser()]
+            return [IsReception()]
         elif self.action in ['update', 'partial_update']:
             return [IsOwnerOrAdmin()]
         elif self.action == 'create':
             return [permissions.AllowAny()]  # Explicitly allow anyone to create
-        return [permissions.IsAuthenticatedOrReadOnly()]
+        return [permissions.AllowAny()]
     
     def get_queryset(self):
         user = self.request.user
@@ -163,7 +167,7 @@ class BookingViewSet(viewsets.ModelViewSet):
         else:
             serializer.save()  # Guest booking with no requested_by
     
-    @action(detail=True, methods=['post'], permission_classes=[IsAdminUser])
+    @action(detail=True, methods=['post'], permission_classes=[IsReception])
     def approve(self, request, pk=None):
         booking = self.get_object()
         
