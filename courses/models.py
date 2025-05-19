@@ -1,6 +1,8 @@
 from django.db import models
 from core.models import User
 from django.core.validators import MinValueValidator
+from decimal import Decimal
+
 
 class Department(models.Model):
     name = models.CharField(max_length=100, unique=True)
@@ -32,10 +34,13 @@ class Course(models.Model):
     price = models.DecimalField(
         max_digits=10,
         decimal_places=2,
-        validators=[MinValueValidator(0.01)],
+        validators=[MinValueValidator(Decimal('0.01'))],  # Updated to use Decimal
         help_text="Must be at least 0.01"
     )
-    duration = models.IntegerField(help_text="Duration in hours")
+    duration = models.PositiveIntegerField(
+        validators=[MinValueValidator(1)],  # Ensures minimum 1 hour
+        help_text="Duration in hours (must be at least 1)"
+    )
     max_students = models.PositiveIntegerField(
         validators=[MinValueValidator(1)],
         help_text="Must be at least 1"
@@ -48,6 +53,14 @@ class Course(models.Model):
     
     def __str__(self):
         return self.title
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=['title', 'department'],
+                name='unique_course_title_per_department'
+            )
+        ]
+
 
 
 class Hall(models.Model):
@@ -102,7 +115,7 @@ class ScheduleSlot(models.Model):
                 name='unique_hall_schedule_per_day_time'
             ),
             models.CheckConstraint(
-                check=models.Q(valid_until__gte=models.F('valid_from')) | 
+                condition=models.Q(valid_until__gte=models.F('valid_from')) | 
                      models.Q(valid_until__isnull=True),
                 name='valid_until_after_valid_from'
             )

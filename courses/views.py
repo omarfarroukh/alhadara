@@ -33,7 +33,7 @@ class CourseTypeViewSet(viewsets.ModelViewSet):
     queryset = CourseType.objects.all().select_related('department')
     serializer_class = CourseTypeSerializer
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
-    filterset_fields = ['department']  # Auto-Swagger docs
+    filterset_fields = ['department','department__name']  # Auto-Swagger docs
     search_fields = ['name']
     ordering_fields = ['name']
     
@@ -66,9 +66,13 @@ class CourseTypeViewSet(viewsets.ModelViewSet):
         
         return super().list(request, *args, **kwargs)
 
+    @action(detail=False, methods=['post'])
+    def bulk(self, request):
+        serializer = self.get_serializer(data=request.data, many=True)
+        serializer.is_valid(raise_exception=True)
+        self.perform_create(serializer)
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
 
-from rest_framework.response import Response
-from rest_framework import status
 
 class CourseViewSet(viewsets.ModelViewSet):
     queryset = Course.objects.all().select_related('course_type')
@@ -169,10 +173,6 @@ class HallViewSet(viewsets.ModelViewSet):
         return [permissions.AllowAny()]
 
 
-from rest_framework.response import Response
-from rest_framework import status
-from django.db.models import Q
-
 class ScheduleSlotViewSet(viewsets.ModelViewSet):
     queryset = ScheduleSlot.objects.all().select_related('course', 'hall')
     serializer_class = ScheduleSlotSerializer
@@ -217,8 +217,25 @@ class ScheduleSlotViewSet(viewsets.ModelViewSet):
         return queryset.distinct()
     
     def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
         try:
-            return super().create(request, *args, **kwargs)
+            serializer.is_valid(raise_exception=True)
+            self.perform_create(serializer)
+            headers = self.get_success_headers(serializer.data)
+            return Response(serializer.data, status=status.HTTP_201_CREATED, headers=headers)
+        except serializers.ValidationError as e:
+            return Response(
+                {'error': 'Validation failed', 'details': e.detail},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+            
+    def update(self, request, *args, **kwargs):
+        instance = self.get_object()
+        serializer = self.get_serializer(instance, data=request.data, partial=kwargs.get('partial', False))
+        try:
+            serializer.is_valid(raise_exception=True)
+            self.perform_update(serializer)
+            return Response(serializer.data)
         except serializers.ValidationError as e:
             return Response(
                 {'error': 'Validation failed', 'details': e.detail},

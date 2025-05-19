@@ -1,3 +1,4 @@
+from decimal import Decimal
 from rest_framework import serializers
 from core.serializers import CustomUserSerializer
 from .models import Department, CourseType, Course, Hall, ScheduleSlot, Booking
@@ -47,6 +48,12 @@ class CourseSerializer(serializers.ModelSerializer):
         
         return data
     
+    def validate_duration(self, value):
+        """Ensure duration is at least 1 hour"""
+        if value < 1:
+            raise serializers.ValidationError("Duration must be at least 1 hour")
+        return value
+    
     def validate_price(self, value):
         if value <= 0:
             raise serializers.ValidationError("Price must be positive")
@@ -58,6 +65,12 @@ class CourseSerializer(serializers.ModelSerializer):
         return value
 
 class HallSerializer(serializers.ModelSerializer):
+    hourly_rate = serializers.DecimalField(
+        max_digits=10, 
+        decimal_places=2,
+        min_value=Decimal('0.01')  # Use Decimal instance for min_value
+    )
+
     class Meta:
         model = Hall
         fields = ('id', 'name', 'capacity', 'location', 'hourly_rate')
@@ -85,7 +98,6 @@ class ScheduleSlotSerializer(serializers.ModelSerializer):
             'recurring', 'valid_from', 'valid_until'
         )
     
-    
     def validate_days_of_week(self, value):
         valid_days = [choice[0] for choice in ScheduleSlot.DAY_CHOICES]
         for day in value:
@@ -94,70 +106,123 @@ class ScheduleSlotSerializer(serializers.ModelSerializer):
         return value
     
     def validate(self, data):
+        # Get or calculate the important fields - safely handle when self.instance is None
+        valid_from = data.get('valid_from')
+        valid_until = data.get('valid_until')
+        recurring = data.get('recurring', True)  # Default to True if not specified
         
-        valid_from = data.get('valid_from', getattr(self.instance, 'valid_from', None))
-        valid_until = data.get('valid_until', getattr(self.instance, 'valid_until', None))
+        # If we're updating, get existing values when not provided in data
+        if self.instance:
+            if 'valid_from' not in data:
+                valid_from = self.instance.valid_from
+            if 'valid_until' not in data:
+                valid_until = self.instance.valid_until
+            if 'recurring' not in data:
+                recurring = self.instance.recurring
         
+        # Basic validation checks
         if valid_from and valid_from < date.today() and not self.instance:
             raise serializers.ValidationError("Cannot schedule in the past")
             
         if valid_until and valid_from and valid_until < valid_from:
             raise serializers.ValidationError("End date must be after start date")
             
-        if data.get('recurring', True) and not valid_until:
+        if recurring and not valid_until:
             raise serializers.ValidationError("Recurring slots require an end date")
+            
+        # Check course capacity vs hall capacity
         course = data.get('course')
         hall = data.get('hall')
         
-        if course and hall:
-            if course.max_students > hall.capacity:
-                raise serializers.ValidationError(
-                    f"Course maximum students ({course.max_students}) "
-                    f"exceeds hall capacity ({hall.capacity})"
-                )
+        # If updating and values not provided, get from instance
+        if self.instance:
+            if 'course' not in data:
+                course = self.instance.course
+            if 'hall' not in data:
+                hall = self.instance.hall
         
-        # Check if end time is after start time
-        if data['start_time'] >= data['end_time']:
+        if course and hall and course.max_students > hall.capacity:
+            raise serializers.ValidationError(
+                f"Course maximum students ({course.max_students}) "
+                f"exceeds hall capacity ({hall.capacity})"
+            )
+        
+        # Check time validity
+        start_time = data.get('start_time')
+        end_time = data.get('end_time')
+        
+        # If updating and values not provided, get from instance
+        if self.instance:
+            if 'start_time' not in data:
+                start_time = self.instance.start_time
+            if 'end_time' not in data:
+                end_time = self.instance.end_time
+        
+        if start_time and end_time and start_time >= end_time:
             raise serializers.ValidationError("End time must be after start time")
         
-        # Check for overlapping schedule slots
-        if 'hall' in data and 'days_of_week' in data and 'start_time' in data and 'end_time' in data:
-            hall = data['hall']
-            days = data['days_of_week']
-            start_time = data['start_time']
-            end_time = data['end_time']
+        # Get days of week - necessary for overlap checking
+        days_of_week = data.get('days_of_week')
+        if days_of_week is None and self.instance:
+            days_of_week = self.instance.days_of_week
+        
+        # Manual overlapping check - query all schedule slots and check overlap directly
+        if hall and days_of_week and start_time and end_time:
+            # Get all other slots using this hall and having overlapping days
+            existing_slots = ScheduleSlot.objects.filter(hall=hall)
             
-            # Get existing slots that overlap with any of the days
-            overlapping_slots = ScheduleSlot.objects.filter(
-                hall=hall,
-                days_of_week__overlap=days,  # Checks for any day overlap
-                start_time__lt=end_time,
-                end_time__gt=start_time
-            ).exclude(id=self.instance.id if self.instance else None)
+            # Exclude current instance if updating
+            if self.instance:
+                existing_slots = existing_slots.exclude(id=self.instance.id)
             
-            # For recurring slots, check date ranges
-            if data.get('recurring', True):
-                valid_from = data.get('valid_from', self.instance.valid_from if self.instance else None)
-                valid_until = data.get('valid_until', self.instance.valid_until if self.instance else None)
+            for slot in existing_slots:
+                # Check for day overlap
+                day_overlap = False
+                for day in days_of_week:
+                    if day in slot.days_of_week:
+                        day_overlap = True
+                        break
                 
-                if valid_until and valid_from > valid_until:
-                    raise serializers.ValidationError("Valid until date must be after valid from date")
+                if not day_overlap:
+                    continue
+                    
+                # Check for time overlap
+                time_overlap = (
+                    (start_time < slot.end_time) and
+                    (end_time > slot.start_time)
+                )
                 
-                overlapping_slots = overlapping_slots.filter(
-                    models.Q(valid_until__gte=valid_from) | 
-                    models.Q(valid_until__isnull=True))
+                if not time_overlap:
+                    continue
                 
-                if valid_until:
-                    overlapping_slots = overlapping_slots.filter(
-                        valid_from__lte=valid_until)
-            
-            if overlapping_slots.exists():
-                raise serializers.ValidationError(
-                    "The hall is already scheduled during one or more of these days/times")
+                # Check for date range overlap
+                date_overlap = True
+                
+                # If both slots have date ranges, check if they overlap
+                if valid_from and valid_until and slot.valid_from and slot.valid_until:
+                    date_overlap = (
+                        (valid_from <= slot.valid_until) and
+                        (valid_until >= slot.valid_from)
+                    )
+                # If our slot has dates but existing slot is infinite
+                elif valid_from and valid_until and slot.valid_from and not slot.valid_until:
+                    date_overlap = valid_until >= slot.valid_from
+                # If our slot is infinite but existing slot has dates
+                elif valid_from and not valid_until and slot.valid_from and slot.valid_until:
+                    date_overlap = valid_from <= slot.valid_until
+                # Both slots are infinite
+                elif valid_from and not valid_until and slot.valid_from and not slot.valid_until:
+                    date_overlap = True
+                # One or both slots don't have a valid_from - shouldn't happen but handle it
+                else:
+                    date_overlap = True
+                
+                if date_overlap:
+                    raise serializers.ValidationError(
+                        "The hall is already scheduled during one or more of these days/times"
+                    )
         
         return data
-
-
 class BookingSerializer(serializers.ModelSerializer):
     hall_name = serializers.ReadOnlyField(source='hall.name')
     requested_by_username = serializers.ReadOnlyField(source='requested_by.username', default=None)
