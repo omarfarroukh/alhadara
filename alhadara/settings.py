@@ -155,7 +155,7 @@ REDIS_URL = os.environ.get('REDIS_URL')
 CACHES = {
     "default": {
         "BACKEND": "django_redis.cache.RedisCache",
-        "LOCATION": os.environ['REDIS_URL'] + "/1",  # DB 1 for cache
+        "LOCATION": os.environ['REDIS_URL'] + "/0",  # DB 1 for cache
         "OPTIONS": {
             "CLIENT_CLASS": "django_redis.client.DefaultClient",
             "SSL": True  # <-- Important for Upstash!
