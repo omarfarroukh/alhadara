@@ -150,6 +150,33 @@ DATABASES = {
         },
     }
 }
+CACHES = {
+    "default": {
+        "BACKEND": "django_redis.cache.RedisCache",
+        "LOCATION": os.environ['REDIS_URL'] + "/1",  # DB 1 for cache
+        "OPTIONS": {
+            "CLIENT_CLASS": "django_redis.client.DefaultClient",
+            "CONNECTION_POOL_KWARGS": {
+                "ssl": True,
+                "ssl_cert_reqs": None
+            }
+        },
+        "KEY_PREFIX": "alhadara-cache"
+    }
+}
+
+CHANNEL_LAYERS = {
+    "default": {
+        "BACKEND": "channels_redis.core.RedisChannelLayer",
+        "CONFIG": {
+            "hosts": [{
+                "address": os.environ['REDIS_URL'],
+                "ssl": True,
+                "ssl_cert_reqs": None
+            }],
+        },
+    }
+}
 
 # Password validation
 # https://docs.djangoproject.com/en/5.0/ref/settings/#auth-password-validators
@@ -168,19 +195,6 @@ AUTH_PASSWORD_VALIDATORS = [
         'NAME': 'django.contrib.auth.password_validation.NumericPasswordValidator',
     },
 ]
-
-CHANNEL_LAYERS = {
-    "default": {
-        "BACKEND": "channels_redis.core.RedisChannelLayer",
-        "CONFIG": {
-            "hosts": [{
-                "address": os.environ['REDIS_URL'],
-                "ssl": True,
-                "ssl_cert_reqs": None
-            }],
-        },
-    }
-}
 
 # Internationalization
 # https://docs.djangoproject.com/en/5.0/topics/i18n/
@@ -246,20 +260,7 @@ DJOSER = {
 }
 
 REDIS_URL = os.environ.get('REDIS_URL')
-CACHES = {
-    "default": {
-        "BACKEND": "django_redis.cache.RedisCache",
-        "LOCATION": os.environ['REDIS_URL'] + "/1",  # DB 1 for cache
-        "OPTIONS": {
-            "CLIENT_CLASS": "django_redis.client.DefaultClient",
-            "CONNECTION_POOL_KWARGS": {
-                "ssl": True,
-                "ssl_cert_reqs": None  # Disable SSL verification
-            }
-        },
-        "KEY_PREFIX": "alhadara-cache"
-    }
-}
+
 
 SESSION_ENGINE = "django.contrib.sessions.backends.cache"
 SESSION_CACHE_ALIAS = "default"
