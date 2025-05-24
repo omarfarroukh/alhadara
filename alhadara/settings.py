@@ -150,16 +150,14 @@ DATABASES = {
         },
     }
 }
+
+REDIS_URL = os.environ.get('REDIS_URL')
 CACHES = {
     "default": {
         "BACKEND": "django_redis.cache.RedisCache",
         "LOCATION": os.environ['REDIS_URL'] + "/1",  # DB 1 for cache
         "OPTIONS": {
             "CLIENT_CLASS": "django_redis.client.DefaultClient",
-            "CONNECTION_POOL_KWARGS": {
-                "ssl": True,
-                "ssl_cert_reqs": None
-            }
         },
         "KEY_PREFIX": "alhadara-cache"
     }
@@ -169,14 +167,16 @@ CHANNEL_LAYERS = {
     "default": {
         "BACKEND": "channels_redis.core.RedisChannelLayer",
         "CONFIG": {
-            "hosts": [{
-                "address": os.environ['REDIS_URL'],
-                "ssl": True,
-                "ssl_cert_reqs": None
-            }],
+           "hosts": [os.environ['REDIS_URL']],
         },
     }
 }
+CELERY_BROKER_URL = REDIS_URL + "/0"  # Using database 0 for Celery
+CELERY_RESULT_BACKEND = REDIS_URL + "/0"
+CELERY_ACCEPT_CONTENT = ['json']
+CELERY_TASK_SERIALIZER = 'json'
+CELERY_RESULT_SERIALIZER = 'json'
+CELERY_TIMEZONE = 'UTC'
 
 # Password validation
 # https://docs.djangoproject.com/en/5.0/ref/settings/#auth-password-validators
@@ -259,7 +259,7 @@ DJOSER = {
     }
 }
 
-REDIS_URL = os.environ.get('REDIS_URL')
+
 
 
 SESSION_ENGINE = "django.contrib.sessions.backends.cache"
@@ -289,9 +289,3 @@ SPECTACULAR_SETTINGS = {
     # 'EXCLUDE_PATH': ['/api/token/', '/api/token/refresh/'],
 }
 
-CELERY_BROKER_URL = REDIS_URL + "/0"  # Using database 0 for Celery
-CELERY_RESULT_BACKEND = REDIS_URL + "/0"
-CELERY_ACCEPT_CONTENT = ['json']
-CELERY_TASK_SERIALIZER = 'json'
-CELERY_RESULT_SERIALIZER = 'json'
-CELERY_TIMEZONE = 'UTC'
