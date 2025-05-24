@@ -158,19 +158,25 @@ CACHES = {
         "LOCATION": os.environ['REDIS_URL'] + "/1",  # DB 1 for cache
         "OPTIONS": {
             "CLIENT_CLASS": "django_redis.client.DefaultClient",
+            "SSL": True  # <-- Important for Upstash!
         },
         "KEY_PREFIX": "alhadara-cache"
     }
 }
 
+
 CHANNEL_LAYERS = {
     "default": {
         "BACKEND": "channels_redis.core.RedisChannelLayer",
         "CONFIG": {
-           "hosts": [os.environ['REDIS_URL']],
+            "hosts": [{
+                "address": os.environ["REDIS_URL"],
+                "ssl": True,  # <-- Enable this!
+            }],
         },
     }
 }
+
 CELERY_BROKER_URL = REDIS_URL + "/0"  # Using database 0 for Celery
 CELERY_RESULT_BACKEND = REDIS_URL + "/0"
 CELERY_ACCEPT_CONTENT = ['json']
@@ -231,9 +237,9 @@ REST_FRAMEWORK = {
         'rest_framework.throttling.UserRateThrottle'
     ],
     'DEFAULT_THROTTLE_RATES': {
-        # 'anon': '100/hour',  # More generous limit for anonymous users
-        # 'user': '1000/hour',# Higher limit for authenticated users
-        # 'login': '5/minute',
+        'anon': '100/hour',  # More generous limit for anonymous users
+        'user': '1000/hour',# Higher limit for authenticated users
+        'login': '5/minute',
     }
 }
 

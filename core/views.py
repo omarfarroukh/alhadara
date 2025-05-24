@@ -33,7 +33,6 @@ import logging
 logger = logging.getLogger(__name__)
 User = get_user_model()
 
-
 class CustomTokenObtainPairView(TokenObtainPairView):
     throttle_classes = [LoginRateThrottle]
 
