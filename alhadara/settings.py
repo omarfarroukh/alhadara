@@ -173,11 +173,14 @@ CHANNEL_LAYERS = {
     "default": {
         "BACKEND": "channels_redis.core.RedisChannelLayer",
         "CONFIG": {
-            "hosts": [(os.environ['REDIS_URL'])],
-            "ssl_cert_reqs": None,
+            "hosts": [os.environ['REDIS_URL']],
+            "ssl": {
+                "ssl_cert_reqs": None
+            }
         },
     }
 }
+
 
 # Internationalization
 # https://docs.djangoproject.com/en/5.0/topics/i18n/
@@ -246,20 +249,14 @@ REDIS_URL = os.environ.get('REDIS_URL')
 CACHES = {
     "default": {
         "BACKEND": "django_redis.cache.RedisCache",
-        "LOCATION": os.environ.get('REDIS_URL', 'redis://localhost:6379') + "/1",  # DB 1 for cache
+        "LOCATION": os.environ['REDIS_URL'] + "/1",  # DB 1 for cache
         "OPTIONS": {
             "CLIENT_CLASS": "django_redis.client.DefaultClient",
-            "SSL_CERT_REQS": None,  # Disable SSL verification for Railway
-            "SOCKET_CONNECT_TIMEOUT": 5,  # 5 seconds
-            "SOCKET_TIMEOUT": 5,  # 5 seconds
+            "SSL_CERT_REQS": None,
             "CONNECTION_POOL_KWARGS": {
-                "max_connections": 100,
-                "retry_on_timeout": True
-            },
-            "COMPRESSOR": "django_redis.compressors.zlib.ZlibCompressor",
+                "ssl_cert_reqs": None
+            }
         },
-        "KEY_PREFIX": "alhadara-cache",
-        "TIMEOUT": 60 * 60 * 24,  # 24 hour default timeout
     }
 }
 
