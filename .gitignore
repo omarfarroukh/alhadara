@@ -3,7 +3,7 @@ __pycache__/
 *.sqlite3
 .env
 venv/
-/.pytest_chache/
+.pytest_chace/
 db.sqlite3
 /media/
 /tests/

@@ -29,7 +29,7 @@ load_dotenv(dotenv_path=BASE_DIR / '.env')
 SECRET_KEY = os.environ.get('SECRET_KEY')
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = os.environ.get('DEBUG', 'True') == 'True'
+DEBUG = os.environ.get('DEBUG', 'False') == 'True'
 
 ALLOWED_HOSTS = os.environ.get('ALLOWED_HOSTS', '').split(',')
 
@@ -69,16 +69,9 @@ MIDDLEWARE = [
     'debug_toolbar.middleware.DebugToolbarMiddleware'
 ]
 
-CORS_ALLOWED_ORIGINS = [
-    "http://localhost:3000",  # Default React dev server
-    "http://127.0.0.1:3000",
-]
-CORS_ALLOW_ALL_ORIGINS = True  # Only for development!
+CORS_ALLOWED_ORIGINS = os.environ.get('CORS_ALLOWED_ORIGINS', 'http://localhost:3000,http://127.0.0.1:3000').split(',')
+CSRF_TRUSTED_ORIGINS = os.environ.get('CSRF_TRUSTED_ORIGINS', 'http://localhost:3000,http://127.0.0.1:3000').split(',')
 
-CSRF_TRUSTED_ORIGINS = [
-    "http://localhost:3000",
-    "http://127.0.0.1:3000",
-]
 
 CORS_ALLOW_HEADERS = [
     'accept',
@@ -112,22 +105,18 @@ TEMPLATES = [
 
 WSGI_APPLICATION = 'alhadara.wsgi.application'
 
-AWS_ACCESS_KEY_ID = "8253eb756a8b8fe7c08298df062a89fd"
-AWS_SECRET_ACCESS_KEY = "798e0f86f99297432b55b0b187934e55dcf9ac5de87a9b3c7423548db4e34ae3"
-AWS_STORAGE_BUCKET_NAME = "alhadarabucket"
-AWS_S3_REGION_NAME = "eu-central-1"
-AWS_S3_ENDPOINT_URL = "https://fqpzctgdjnmgehcinubj.supabase.co/storage/v1/s3"
+AWS_ACCESS_KEY_ID = os.environ['AWS_ACCESS_KEY_ID']
+AWS_SECRET_ACCESS_KEY = os.environ['AWS_SECRET_ACCESS_KEY']
+AWS_STORAGE_BUCKET_NAME = os.environ['AWS_STORAGE_BUCKET_NAME']
+AWS_S3_REGION_NAME = os.environ.get('AWS_S3_REGION_NAME', 'eu-central-1')
+AWS_S3_ENDPOINT_URL = os.environ['AWS_S3_ENDPOINT_URL']
+AWS_S3_SIGNATURE_VERSION = os.environ.get('AWS_S3_SIGNATURE_VERSION', 's3v4')
+AWS_S3_FILE_OVERWRITE = os.environ.get('AWS_S3_FILE_OVERWRITE', 'False') == 'True'
+AWS_DEFAULT_ACL = os.environ.get('AWS_DEFAULT_ACL')
+AWS_QUERYSTRING_AUTH = os.environ.get('AWS_QUERYSTRING_AUTH', 'False') == 'True'
+AWS_S3_USE_SSL = os.environ.get('AWS_S3_USE_SSL', 'True') == 'True'
 
-
-
-AWS_S3_SIGNATURE_VERSION = 's3v4'
-AWS_S3_FILE_OVERWRITE = False
-AWS_DEFAULT_ACL = None 
-AWS_QUERYSTRING_AUTH = False
-AWS_S3_USE_SSL = True
-
-MEDIA_URL = f'https://fqpzctgdjnmgehcinubj.supabase.co/storage/v1/object/public/{AWS_STORAGE_BUCKET_NAME}/'
-
+MEDIA_URL = os.environ['MEDIA_URL']
 STORAGES = {
     'default': {
         'BACKEND': 'storages.backends.s3boto3.S3Boto3Storage',
@@ -157,7 +146,7 @@ DATABASES = {
         'HOST': os.environ.get('DB_HOST'),
         'PORT': os.environ.get('DB_PORT'),
         'OPTIONS': {
-            'sslmode': 'require',
+            'sslmode': os.environ.get('DB_SSLMODE', 'require'),
         },
     }
 }
@@ -280,9 +269,9 @@ SPECTACULAR_SETTINGS = {
     # This excludes SimpleJWT views from schema generation if needed
     # 'EXCLUDE_PATH': ['/api/token/', '/api/token/refresh/'],
 }
-
-CELERY_BROKER_URL = 'redis://redis:6379/0'  # Docker service name
-CELERY_RESULT_BACKEND = 'redis://redis:6379/0'
+REDIS_URL = os.environ.get('REDIS_URL', 'redis://localhost:6379')
+CELERY_BROKER_URL = os.environ.get('CELERY_BROKER_URL', REDIS_URL + '/0')
+CELERY_RESULT_BACKEND = os.environ.get('CELERY_RESULT_BACKEND', REDIS_URL + '/0')
 CELERY_ACCEPT_CONTENT = ['json']
 CELERY_TASK_SERIALIZER = 'json'
 CELERY_RESULT_SERIALIZER = 'json'
