@@ -231,9 +231,9 @@ REST_FRAMEWORK = {
         'rest_framework.throttling.UserRateThrottle'
     ],
     'DEFAULT_THROTTLE_RATES': {
-        'anon': '100/hour',  # More generous limit for anonymous users
-        'user': '1000/hour',# Higher limit for authenticated users
-        'login': '5/minute',
+        # 'anon': '100/hour',  # More generous limit for anonymous users
+        # 'user': '1000/hour',# Higher limit for authenticated users
+        # 'login': '5/minute',
     }
 }
 
