@@ -1,6 +1,7 @@
 from django.contrib import admin
 from .models import Department, CourseType, Course, Hall, ScheduleSlot, Booking
 from django.contrib.admin import SimpleListFilter
+from django.utils.dateformat import time_format
 
 @admin.register(Department)
 class DepartmentAdmin(admin.ModelAdmin):
@@ -39,13 +40,27 @@ class DaysOfWeekFilter(SimpleListFilter):
 
 @admin.register(ScheduleSlot)
 class ScheduleSlotAdmin(admin.ModelAdmin):
-    list_display = ('course', 'hall', 'display_days', 'start_time', 'end_time')
+    list_display = ('course', 'hall', 'display_days', 'start_time', 'end_time', 'valid_from', 'valid_until', 'recurring')
     list_filter = (DaysOfWeekFilter, 'hall', 'course', 'recurring')
     search_fields = ('course__title', 'hall__name')
+    list_select_related = ('course', 'hall')
+    
+    def formatted_start_time(self, obj):
+        return time_format(obj.start_time, 'H:i')
+    formatted_start_time.short_description = 'Start'
+    formatted_start_time.admin_order_field = 'start_time'
+    
+    def formatted_end_time(self, obj):
+        return time_format(obj.end_time, 'H:i')
+    formatted_end_time.short_description = 'End'
+    formatted_end_time.admin_order_field = 'end_time'
     
     def display_days(self, obj):
         return ", ".join([obj.get_day_display(day) for day in obj.days_of_week])
     display_days.short_description = 'Days of Week'
+    
+    def get_queryset(self, request):
+        return super().get_queryset(request).prefetch_related('course__teacher')
 
 @admin.register(Booking)
 class BookingAdmin(admin.ModelAdmin):

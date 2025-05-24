@@ -1,3 +1,4 @@
+from django.conf import settings
 from django.db import models
 from django.contrib.auth.models import AbstractBaseUser, BaseUserManager, PermissionsMixin
 from django.core.validators import MinValueValidator, MaxValueValidator
@@ -216,10 +217,11 @@ class DepositRequest(models.Model):
     deposit_method = models.ForeignKey(DepositMethod, on_delete=models.CASCADE)
     transaction_number = models.CharField(max_length=100)
     amount = models.DecimalField(max_digits=10, decimal_places=2)
-    screenshot_path = models.ImageField(upload_to='deposit_screenshots/')
+    screenshot_path = models.ImageField(
+        upload_to='deposit_screenshots/',
+    )
     status = models.CharField(max_length=10, choices=STATUS_CHOICES, default='pending')
     created_at = models.DateTimeField(auto_now_add=True)
-    wallet = models.ForeignKey(EWallet, on_delete=models.CASCADE, related_name='deposit_requests')
     
     def __str__(self):
         return f"{self.user.get_full_name} - {self.amount} ({self.get_status_display()})" 

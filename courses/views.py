@@ -22,6 +22,17 @@ class DepartmentViewSet(viewsets.ModelViewSet):
             return [IsReception()]
         return [permissions.AllowAny()]
     
+    def list(self, request, *args, **kwargs):
+                    # Get filtered queryset
+        queryset = self.filter_queryset(self.get_queryset())
+            
+        if not queryset.exists():
+                return Response(
+                    {'message': 'there are no departments'},
+                    status=status.HTTP_200_OK
+                )
+        return super().list(request, *args, **kwargs)
+    
     @action(detail=False, methods=['post'])
     def bulk(self, request):
         serializer = self.get_serializer(data=request.data, many=True)

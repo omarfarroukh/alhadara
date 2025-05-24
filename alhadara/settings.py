@@ -15,12 +15,12 @@ from datetime import timedelta
 import os
 from dotenv import load_dotenv
 
-# Load environment variables from .env file
-load_dotenv()
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
+# Load environment variables from .env file
+load_dotenv(dotenv_path=BASE_DIR / '.env')
 
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/5.0/howto/deployment/checklist/
@@ -53,10 +53,11 @@ INSTALLED_APPS = [
     'channels',
     'core',
     'courses',
-    'rest_framework_simplejwt.token_blacklist',  # Add this line
+    'rest_framework_simplejwt.token_blacklist',
 ]
 
 MIDDLEWARE = [
+    'corsheaders.middleware.CorsMiddleware',
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
@@ -66,6 +67,29 @@ MIDDLEWARE = [
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
     'debug_toolbar.middleware.DebugToolbarMiddleware'
+]
+
+CORS_ALLOWED_ORIGINS = [
+    "http://localhost:3000",  # Default React dev server
+    "http://127.0.0.1:3000",
+]
+CORS_ALLOW_ALL_ORIGINS = True  # Only for development!
+
+CSRF_TRUSTED_ORIGINS = [
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+]
+
+CORS_ALLOW_HEADERS = [
+    'accept',
+    'accept-encoding',
+    'authorization',
+    'content-type',
+    'dnt',
+    'origin',
+    'user-agent',
+    'x-csrftoken',
+    'x-requested-with',
 ]
 
 ROOT_URLCONF = 'alhadara.urls'
@@ -88,11 +112,38 @@ TEMPLATES = [
 
 WSGI_APPLICATION = 'alhadara.wsgi.application'
 
-MEDIA_URL = '/media/'
-MEDIA_ROOT = BASE_DIR / 'media'
+AWS_ACCESS_KEY_ID = "8253eb756a8b8fe7c08298df062a89fd"
+AWS_SECRET_ACCESS_KEY = "798e0f86f99297432b55b0b187934e55dcf9ac5de87a9b3c7423548db4e34ae3"
+AWS_STORAGE_BUCKET_NAME = "alhadarabucket"
+AWS_S3_REGION_NAME = "eu-central-1"
+AWS_S3_ENDPOINT_URL = "https://fqpzctgdjnmgehcinubj.supabase.co/storage/v1/s3"
+
+
+
+AWS_S3_SIGNATURE_VERSION = 's3v4'
+AWS_S3_FILE_OVERWRITE = False
+AWS_DEFAULT_ACL = None 
+AWS_QUERYSTRING_AUTH = False
+AWS_S3_USE_SSL = True
+
+MEDIA_URL = f'https://fqpzctgdjnmgehcinubj.supabase.co/storage/v1/object/public/{AWS_STORAGE_BUCKET_NAME}/'
+
+STORAGES = {
+    'default': {
+        'BACKEND': 'storages.backends.s3boto3.S3Boto3Storage',
+    },
+    'staticfiles': {
+        'BACKEND': 'django.contrib.staticfiles.storage.StaticFilesStorage',
+    },
+}
+
+# Additional Supabase-specific settings
+AWS_S3_OBJECT_PARAMETERS = {
+    'CacheControl': 'max-age=86400',
+}
+
 
 AUTH_USER_MODEL = 'core.User'
-
 
 # Database
 # https://docs.djangoproject.com/en/5.0/ref/settings/#databases
@@ -105,6 +156,9 @@ DATABASES = {
         'PASSWORD': os.environ.get('DB_PASSWORD'),
         'HOST': os.environ.get('DB_HOST'),
         'PORT': os.environ.get('DB_PORT'),
+        'OPTIONS': {
+            'sslmode': 'require',
+        },
     }
 }
 
@@ -143,7 +197,7 @@ USE_TZ = True
 # https://docs.djangoproject.com/en/5.0/howto/static-files/
 
 STATIC_URL = 'static/'
-
+STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.0/ref/settings/#default-auto-field
 
@@ -219,10 +273,17 @@ SPECTACULAR_SETTINGS = {
     'TITLE': 'alhadara',
     'DESCRIPTION': 'Your API description',
     'VERSION': '1.0.0',
-    
+    'SERVE_INCLUDE_SCHEMA': False,
     # This is the important part for SimpleJWT compatibility
     'COMPONENT_SPLIT_REQUEST': True,
-    
+    'SCHEMA_PATH_PREFIX': r'/api/'
     # This excludes SimpleJWT views from schema generation if needed
     # 'EXCLUDE_PATH': ['/api/token/', '/api/token/refresh/'],
 }
+
+CELERY_BROKER_URL = 'redis://redis:6379/0'  # Docker service name
+CELERY_RESULT_BACKEND = 'redis://redis:6379/0'
+CELERY_ACCEPT_CONTENT = ['json']
+CELERY_TASK_SERIALIZER = 'json'
+CELERY_RESULT_SERIALIZER = 'json'
+CELERY_TIMEZONE = 'UTC'

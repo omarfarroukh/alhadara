@@ -118,7 +118,8 @@ class SecurityAnswerAdmin(admin.ModelAdmin):
     def save_model(self, request, obj, form, change):
         if 'plain_answer' in form.cleaned_data and form.cleaned_data['plain_answer']:
             obj.set_answer(form.cleaned_data['plain_answer'])
-        super().save_model(request, obj, form, change)@admin.register(Interest)
+        super().save_model(request, obj, form, change)
+@admin.register(Interest)
 class InterestAdmin(admin.ModelAdmin):
     list_display = ('name', 'category')
     list_filter = ('category',)

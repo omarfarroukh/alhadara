@@ -110,10 +110,6 @@ class ScheduleSlot(models.Model):
     
     class Meta:
         constraints = [
-            models.UniqueConstraint(
-                fields=['hall', 'days_of_week', 'start_time'],
-                name='unique_hall_schedule_per_day_time'
-            ),
             models.CheckConstraint(
                 condition=models.Q(valid_until__gte=models.F('valid_from')) | 
                      models.Q(valid_until__isnull=True),

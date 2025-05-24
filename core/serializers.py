@@ -3,6 +3,9 @@ from django.contrib.auth.hashers import make_password, identify_hasher
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from djoser.serializers import UserCreateSerializer as BaseUserCreateSerializer, UserSerializer
+import os
+import uuid
+from django.core.files.base import ContentFile
 from .models import (
     User, SecurityQuestion, SecurityAnswer, Interest, 
     Profile, ProfileInterest, EWallet, DepositMethod,
@@ -12,7 +15,7 @@ from django.core.exceptions import ValidationError
 from django.contrib.auth.password_validation import validate_password
 import re
 from django.contrib.auth import get_user_model
-
+from django.conf import settings
 User = get_user_model()
 
 def validate_password_strength(value):
@@ -312,18 +315,47 @@ class DepositMethodSerializer(serializers.ModelSerializer):
         fields = ('id', 'name', 'is_active', 'bank_info', 'transfer_info')
 
 class DepositRequestSerializer(serializers.ModelSerializer):
-    user_username = serializers.ReadOnlyField(source='user.username')
-    deposit_method_name = serializers.ReadOnlyField(source='deposit_method.get_name_display')
+    user_phone = serializers.CharField(source='user.phone', read_only=True)
+    deposit_method_name = serializers.CharField(source='deposit_method.name', read_only=True)
+    screenshot_url = serializers.SerializerMethodField()
     
     class Meta:
         model = DepositRequest
-        fields = (
-            'id', 'user', 'user_username', 'deposit_method', 'deposit_method_name',
-            'transaction_number', 'amount', 'screenshot_path', 'status', 'created_at',
-            'wallet'
-        )
-        read_only_fields = ('user', 'status', 'created_at')
+        fields = [
+            'id', 'user', 'user_phone', 'deposit_method', 'deposit_method_name',
+            'transaction_number', 'amount', 'screenshot_path', 'screenshot_url',
+            'status', 'created_at'
+        ]
+        read_only_fields = ['user', 'status', 'created_at']
+    
+    def get_screenshot_url(self, obj):
+        request = self.context.get('request')
+        if obj.screenshot_path and hasattr(obj.screenshot_path, 'url'):
+            return request.build_absolute_uri(obj.screenshot_path.url)
+        return None
+
+    def validate_screenshot_path(self, value):
+        if not value:
+            raise serializers.ValidationError("No file was submitted.")
+        
+        # Check file size
+        if hasattr(value, 'size') and value.size > 5 * 1024 * 1024:
+            raise serializers.ValidationError("File too large (max 5MB)")
+        
+        # Check file extension
+        if hasattr(value, 'name') and not value.name.lower().endswith(('.jpg', '.jpeg', '.png')):
+            raise serializers.ValidationError("Only JPG/PNG files allowed")
+        
+        return value
     
     def create(self, validated_data):
-        validated_data['user'] = self.context['request'].user
-        return super().create(validated_data)
+        # Set the user from the request context
+        request = self.context.get('request')
+        if request and request.user.is_authenticated:
+            validated_data['user'] = request.user
+            validated_data['status'] = 'pending'
+        else:
+            raise serializers.ValidationError("Authentication required")
+        
+        # Create the instance - Django will handle the file upload automatically
+        return DepositRequest.objects.create(**validated_data)
