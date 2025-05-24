@@ -1,0 +1,15 @@
+*.pyc
+__pycache__/
+*.sqlite3
+.env
+venv/
+.pytest_chace/
+db.sqlite3
+/media/
+/tests/
+/staticfiles/
+pytest.ini
+.DS_Store
+.idea/
+.vscode/.env
+dockerfile
