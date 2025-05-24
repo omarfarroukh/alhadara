@@ -173,14 +173,14 @@ CHANNEL_LAYERS = {
     "default": {
         "BACKEND": "channels_redis.core.RedisChannelLayer",
         "CONFIG": {
-            "hosts": [os.environ['REDIS_URL']],
-            "ssl": {
+            "hosts": [{
+                "address": os.environ['REDIS_URL'],
+                "ssl": True,
                 "ssl_cert_reqs": None
-            }
+            }],
         },
     }
 }
-
 
 # Internationalization
 # https://docs.djangoproject.com/en/5.0/topics/i18n/
@@ -252,11 +252,12 @@ CACHES = {
         "LOCATION": os.environ['REDIS_URL'] + "/1",  # DB 1 for cache
         "OPTIONS": {
             "CLIENT_CLASS": "django_redis.client.DefaultClient",
-            "SSL_CERT_REQS": None,
             "CONNECTION_POOL_KWARGS": {
-                "ssl_cert_reqs": None
+                "ssl": True,
+                "ssl_cert_reqs": None  # Disable SSL verification
             }
         },
+        "KEY_PREFIX": "alhadara-cache"
     }
 }
 
