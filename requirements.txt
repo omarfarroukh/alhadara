@@ -99,7 +99,7 @@ social-auth-app-django==5.4.3
 social-auth-core==4.5.6
 sqlparse==0.5.3
 tornado==6.5.1
-twisted[http2,tls]==22.10.0
+Twisted==24.11.0
 txaio==23.1.1
 typing_extensions==4.12.2
 tzdata==2025.1

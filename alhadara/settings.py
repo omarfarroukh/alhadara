@@ -173,8 +173,8 @@ CHANNEL_LAYERS = {
     "default": {
         "BACKEND": "channels_redis.core.RedisChannelLayer",
         "CONFIG": {
-            "hosts": [os.environ.get('REDIS_URL')],
-            "ssl_cert_reqs": None,  # Disable SSL verification for Railway
+            "hosts": [(os.environ['REDIS_URL'])],
+            "ssl_cert_reqs": None,
         },
     }
 }
@@ -246,12 +246,20 @@ REDIS_URL = os.environ.get('REDIS_URL')
 CACHES = {
     "default": {
         "BACKEND": "django_redis.cache.RedisCache",
-        "LOCATION": REDIS_URL + "/1",  # Using database 1 for cache
+        "LOCATION": os.environ.get('REDIS_URL', 'redis://localhost:6379') + "/1",  # DB 1 for cache
         "OPTIONS": {
             "CLIENT_CLASS": "django_redis.client.DefaultClient",
-            "SSL_CERT_REQS": None,  # Important for Railway's Redis
+            "SSL_CERT_REQS": None,  # Disable SSL verification for Railway
+            "SOCKET_CONNECT_TIMEOUT": 5,  # 5 seconds
+            "SOCKET_TIMEOUT": 5,  # 5 seconds
+            "CONNECTION_POOL_KWARGS": {
+                "max_connections": 100,
+                "retry_on_timeout": True
+            },
+            "COMPRESSOR": "django_redis.compressors.zlib.ZlibCompressor",
         },
-        "KEY_PREFIX": "alhadara-cache"
+        "KEY_PREFIX": "alhadara-cache",
+        "TIMEOUT": 60 * 60 * 24,  # 24 hour default timeout
     }
 }
 
