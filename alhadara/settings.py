@@ -30,6 +30,7 @@ SECRET_KEY = os.environ.get('SECRET_KEY')
 
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = os.environ.get('DEBUG', 'False') == 'True'
+DEVELOPMENT = DEBUG
 
 ALLOWED_HOSTS = os.environ.get('ALLOWED_HOSTS', '').split(',')
 
@@ -116,15 +117,27 @@ AWS_DEFAULT_ACL = os.environ.get('AWS_DEFAULT_ACL')
 AWS_QUERYSTRING_AUTH = os.environ.get('AWS_QUERYSTRING_AUTH', 'False') == 'True'
 AWS_S3_USE_SSL = os.environ.get('AWS_S3_USE_SSL', 'True') == 'True'
 
-MEDIA_URL = os.environ['MEDIA_URL']
-STORAGES = {
-    'default': {
-        'BACKEND': 'storages.backends.s3boto3.S3Boto3Storage',
-    },
-    'staticfiles': {
-        'BACKEND': 'django.contrib.staticfiles.storage.StaticFilesStorage',
-    },
-}
+if DEVELOPMENT:
+    MEDIA_URL = '/media/'
+    MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
+    STORAGES = {
+        'default': {
+            'BACKEND': 'django.core.files.storage.FileSystemStorage',
+        },
+        'staticfiles': {
+            'BACKEND': 'django.contrib.staticfiles.storage.StaticFilesStorage',
+        },
+    }
+else:
+    MEDIA_URL = os.environ['MEDIA_URL']
+    STORAGES = {
+        'default': {
+            'BACKEND': 'storages.backends.s3boto3.S3Boto3Storage',
+        },
+        'staticfiles': {
+            'BACKEND': 'django.contrib.staticfiles.storage.StaticFilesStorage',
+        },
+    }
 
 # Additional Supabase-specific settings
 AWS_S3_OBJECT_PARAMETERS = {
@@ -137,45 +150,84 @@ AUTH_USER_MODEL = 'core.User'
 # Database
 # https://docs.djangoproject.com/en/5.0/ref/settings/#databases
 
-DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.postgresql',
-        'NAME': os.environ.get('DB_NAME'),
-        'USER': os.environ.get('DB_USER'),
-        'PASSWORD': os.environ.get('DB_PASSWORD'),
-        'HOST': os.environ.get('DB_HOST'),
-        'PORT': os.environ.get('DB_PORT'),
-        'OPTIONS': {
-            'sslmode': os.environ.get('DB_SSLMODE', 'require'),
-        },
+if DEVELOPMENT:
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.postgresql',
+            'NAME': os.environ.get('LOCAL_DB_NAME', 'alhadara'),
+            'USER': os.environ.get('LOCAL_DB_USER', 'postgres'),
+            'PASSWORD': os.environ.get('LOCAL_DB_PASSWORD', 'yasser'),
+            'HOST': os.environ.get('LOCAL_DB_HOST', 'localhost'),
+            'PORT': os.environ.get('LOCAL_DB_PORT', '5432'),
+        }
     }
-}
-
-REDIS_URL = os.environ.get('REDIS_URL')
-CACHES = {
-    "default": {
-        "BACKEND": "django_redis.cache.RedisCache",
-        "LOCATION": os.environ['REDIS_URL'] + "/0",  # DB 1 for cache
-        "OPTIONS": {
-            "CLIENT_CLASS": "django_redis.client.DefaultClient",
-            "SSL": True  # <-- Important for Upstash!
-        },
-        "KEY_PREFIX": "alhadara-cache"
+else:
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.postgresql',
+            'NAME': os.environ.get('DB_NAME'),
+            'USER': os.environ.get('DB_USER'),
+            'PASSWORD': os.environ.get('DB_PASSWORD'),
+            'HOST': os.environ.get('DB_HOST'),
+            'PORT': os.environ.get('DB_PORT'),
+            'OPTIONS': {
+                'sslmode': os.environ.get('DB_SSLMODE', 'require'),
+            },
+        }
     }
-}
 
-
-CHANNEL_LAYERS = {
-    "default": {
-        "BACKEND": "channels_redis.core.RedisChannelLayer",
-        "CONFIG": {
-            "hosts": [{
-                "address": os.environ["REDIS_URL"],
-                "ssl": True,  # <-- Enable this!
-            }],
-        },
+if DEVELOPMENT:
+    REDIS_URL = os.environ.get('LOCAL_REDIS_URL', 'redis://localhost:6379')
+    CACHES = {
+        "default": {
+            "BACKEND": "django_redis.cache.RedisCache",
+            "LOCATION": f"{REDIS_URL}/0",
+            "OPTIONS": {
+                "CLIENT_CLASS": "django_redis.client.DefaultClient",
+            }
+        }
     }
-}
+    
+    CHANNEL_LAYERS = {
+        "default": {
+            "BACKEND": "channels_redis.core.RedisChannelLayer",
+            "CONFIG": {
+                "hosts": [(REDIS_URL)],
+            },
+        }
+    }
+    
+    CELERY_BROKER_URL = f"{REDIS_URL}/0"
+    CELERY_RESULT_BACKEND = f"{REDIS_URL}/0"
+else:
+    REDIS_URL = os.environ['REDIS_URL']
+    CACHES = {
+        "default": {
+            "BACKEND": "django_redis.cache.RedisCache",
+            "LOCATION": os.environ['REDIS_URL'] + "/0",
+            "OPTIONS": {
+                "CLIENT_CLASS": "django_redis.client.DefaultClient",
+                "SSL": True
+            },
+            "KEY_PREFIX": "alhadara-cache"
+        }
+    }
+    
+    CHANNEL_LAYERS = {
+        "default": {
+            "BACKEND": "channels_redis.core.RedisChannelLayer",
+            "CONFIG": {
+                "hosts": [{
+                    "address": os.environ["REDIS_URL"],
+                    "ssl": True,
+                }],
+            },
+        }
+    }
+    
+    CELERY_BROKER_URL = REDIS_URL + "/0"
+    CELERY_RESULT_BACKEND = REDIS_URL + "/0"
+
 
 CELERY_BROKER_URL = REDIS_URL + "/0"  # Using database 0 for Celery
 CELERY_RESULT_BACKEND = REDIS_URL + "/0"
