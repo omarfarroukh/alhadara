@@ -228,7 +228,17 @@ class InterestSerializer(serializers.ModelSerializer):
         model = Interest
         fields = ('id', 'name', 'category')
 
+class AddInterestSerializer(serializers.Serializer):
+    interest = serializers.IntegerField(help_text="ID of the interest to add")
+    intensity = serializers.IntegerField(
+        default=3, 
+        min_value=1, 
+        max_value=5,
+        help_text="Intensity level from 1-5"
+    )
 
+class RemoveInterestSerializer(serializers.Serializer):
+    interest = serializers.IntegerField(help_text="ID of the interest to remove")
 class ProfileInterestSerializer(serializers.ModelSerializer):
     interest_name = serializers.ReadOnlyField(source='interest.name')
     interest_category = serializers.ReadOnlyField(source='interest.category')

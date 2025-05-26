@@ -135,7 +135,6 @@ class Interest(models.Model):
     def __str__(self):
         return self.name
 
-
 class Profile(models.Model):
     GENDER_CHOICES = (
         ('male', 'Male'),

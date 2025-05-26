@@ -20,7 +20,7 @@ from .models import (
 )
 from .serializers import (
     NewPasswordSerializer, PasswordResetRequestSerializer, SecurityAnswerValidationSerializer, SecurityQuestionSerializer, SecurityAnswerSerializer, InterestSerializer, 
-    ProfileSerializer, ProfileDetailSerializer, EWalletSerializer, DepositMethodSerializer, DepositRequestSerializer
+    ProfileSerializer, ProfileDetailSerializer, EWalletSerializer, DepositMethodSerializer, DepositRequestSerializer, AddInterestSerializer,RemoveInterestSerializer
 )
 from rest_framework.permissions import AllowAny
 from .permissions import IsStudent,IsReception, IsAdminOrReception, IsOwnerOrAdminOrReception
@@ -102,16 +102,22 @@ class ProfileViewSet(viewsets.ModelViewSet):
     def get_serializer_class(self):
         if self.action in ['retrieve']:
             return ProfileDetailSerializer
+        elif self.action == 'add_interest':
+            return AddInterestSerializer
+        elif self.action == 'remove_interest':
+            return RemoveInterestSerializer
         return ProfileSerializer
 
     @action(detail=True, methods=['post'])
     def add_interest(self, request, pk=None):
         profile = self.get_object()
-        interest_id = request.data.get('interest')
-        intensity = request.data.get('intensity', 3)
+        serializer = AddInterestSerializer(data=request.data)
         
-        if not interest_id:
-            return Response({'error': 'Interest ID is required'}, status=status.HTTP_400_BAD_REQUEST)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        
+        interest_id = serializer.validated_data['interest']
+        intensity = serializer.validated_data['intensity']
         
         try:
             interest = Interest.objects.get(id=interest_id)
@@ -132,10 +138,12 @@ class ProfileViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'])
     def remove_interest(self, request, pk=None):
         profile = self.get_object()
-        interest_id = request.data.get('interest')
+        serializer = RemoveInterestSerializer(data=request.data)
         
-        if not interest_id:
-            return Response({'error': 'Interest ID is required'}, status=status.HTTP_400_BAD_REQUEST)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        
+        interest_id = serializer.validated_data['interest']
         
         try:
             profile_interest = ProfileInterest.objects.get(profile=profile, interest_id=interest_id)
@@ -143,7 +151,6 @@ class ProfileViewSet(viewsets.ModelViewSet):
             return Response({'status': 'interest removed'}, status=status.HTTP_200_OK)
         except ProfileInterest.DoesNotExist:
             return Response({'error': 'Interest not found for this profile'}, status=status.HTTP_404_NOT_FOUND)
-
 
 class EWalletViewSet(viewsets.ReadOnlyModelViewSet):
     serializer_class = EWalletSerializer
