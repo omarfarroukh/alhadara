@@ -94,6 +94,7 @@ django-storages = {extras = ["boto3"], version = "*"}
 gunicorn = "*"
 channels-redis = "*"
 twisted = {extras = ["http2", "tls"], version = "*"}
+uvicorn = "*"
 
 [dev-packages]
 

@@ -2,6 +2,8 @@ from django.contrib import admin
 from .models import Department, CourseType, Course, Hall, ScheduleSlot, Booking
 from django.contrib.admin import SimpleListFilter
 from django.utils.dateformat import time_format
+from django import forms
+from django.core.exceptions import ValidationError
 
 @admin.register(Department)
 class DepartmentAdmin(admin.ModelAdmin):
@@ -16,9 +18,9 @@ class CourseTypeAdmin(admin.ModelAdmin):
 
 @admin.register(Course)
 class CourseAdmin(admin.ModelAdmin):
-    list_display = ('title', 'department', 'course_type', 'price', 'teacher')
+    list_display = ('title', 'department', 'course_type', 'price')
     list_filter = ('department', 'course_type', 'certification_eligible','category')
-    search_fields = ('title', 'teacher__username','category')
+    search_fields = ('title','category')
 
 @admin.register(Hall)
 class HallAdmin(admin.ModelAdmin):
@@ -37,13 +39,39 @@ class DaysOfWeekFilter(SimpleListFilter):
         if self.value():
             return queryset.filter(days_of_week__contains=[self.value()])
         return queryset
+class ScheduleSlotAdminForm(forms.ModelForm):
+    class Meta:
+        model = ScheduleSlot
+        fields = '__all__'
+    
+    def clean(self):
+        """Ensure model validation runs in admin"""
+        cleaned_data = super().clean()
+        
+        # Create a temporary instance to run model validation
+        instance = ScheduleSlot(**cleaned_data)
+        if self.instance.pk:
+            instance.pk = self.instance.pk
+        
+        try:
+            instance.clean()
+        except ValidationError as e:
+            raise forms.ValidationError(e.message)
+        
+        return cleaned_data
 
 @admin.register(ScheduleSlot)
 class ScheduleSlotAdmin(admin.ModelAdmin):
-    list_display = ('course', 'hall', 'display_days', 'start_time', 'end_time', 'valid_from', 'valid_until', 'recurring')
-    list_filter = (DaysOfWeekFilter, 'hall', 'course', 'recurring')
-    search_fields = ('course__title', 'hall__name')
-    list_select_related = ('course', 'hall')
+    form = ScheduleSlotAdminForm
+    list_display = ('course', 'teacher_display', 'hall', 'display_days', 'formatted_start_time', 'formatted_end_time', 'valid_from', 'valid_until', 'recurring')
+    list_filter = (DaysOfWeekFilter, 'hall', 'course', 'teacher', 'recurring')
+    search_fields = ('course__title', 'hall__name', 'teacher__first_name', 'teacher__last_name', 'teacher__phone')
+    list_select_related = ('course', 'hall', 'teacher')
+    
+    def teacher_display(self, obj):
+        return obj.teacher.get_full_name() if obj.teacher else "Not assigned"
+    teacher_display.short_description = 'Teacher'
+    teacher_display.admin_order_field = 'teacher'
     
     def formatted_start_time(self, obj):
         return time_format(obj.start_time, 'H:i')
@@ -60,8 +88,8 @@ class ScheduleSlotAdmin(admin.ModelAdmin):
     display_days.short_description = 'Days of Week'
     
     def get_queryset(self, request):
-        return super().get_queryset(request).prefetch_related('course__teacher')
-
+        return super().get_queryset(request).select_related('course', 'hall', 'teacher')
+      
 @admin.register(Booking)
 class BookingAdmin(admin.ModelAdmin):
     list_display = ('purpose', 'hall', 'status', 'start_datetime', 'requested_by')

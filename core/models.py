@@ -1,9 +1,11 @@
+from decimal import Decimal
 from django.conf import settings
 from django.db import models
 from django.contrib.auth.models import AbstractBaseUser, BaseUserManager, PermissionsMixin
 from django.core.validators import MinValueValidator, MaxValueValidator
 from django.utils import timezone
 from .validators import syrian_phone_validator
+from django.core.exceptions import ValidationError
 from django.contrib.auth.hashers import make_password, is_password_usable
 
 
@@ -120,7 +122,6 @@ class SecurityAnswer(models.Model):
     def __str__(self):
         return f"{self.user.phone} - {self.question.question_text[:20]}"
 
-
 class Interest(models.Model):
     CATEGORY_CHOICES = (
         ('academic', 'Academic'),
@@ -150,6 +151,17 @@ class Profile(models.Model):
     
     def __str__(self):
         return self.user.get_full_name() or str(self.user)
+    
+    def clean(self):
+        """Model-level validation"""
+        super().clean()
+        
+        # Add any profile-specific validation here
+        if self.birth_date and self.birth_date > timezone.now().date():
+            raise ValidationError("Birth date cannot be in the future")
+            
+        if self.national_id and not self.national_id.isdigit():
+            raise ValidationError("National ID must contain only digits")
 
 class ProfileInterest(models.Model):
     profile = models.ForeignKey(Profile, on_delete=models.CASCADE)
@@ -170,6 +182,32 @@ class EWallet(models.Model):
     
     def __str__(self):
         return f"Wallet for {self.user.get_full_name}"
+    
+    def deposit(self, amount):
+        """Deposit money into the wallet"""
+        if amount <= 0:
+            raise ValidationError("Deposit amount must be positive")
+            
+        self.current_balance += Decimal(amount)
+        self.save()
+        
+    def withdraw(self, amount):
+        """Withdraw money from the wallet"""
+        if amount <= 0:
+            raise ValidationError("Withdrawal amount must be positive")
+            
+        if self.current_balance < amount:
+            raise ValidationError("Insufficient funds")
+            
+        self.current_balance -= Decimal(amount)
+        self.save()
+        
+    def clean(self):
+        """Model-level validation"""
+        super().clean()
+        
+        if self.current_balance < 0:
+            raise ValidationError("Balance cannot be negative")
 
 
 class DepositMethod(models.Model):
@@ -225,3 +263,27 @@ class DepositRequest(models.Model):
     
     def __str__(self):
         return f"{self.user.get_full_name} - {self.amount} ({self.get_status_display()})" 
+    
+    def approve(self):
+        """Approve the deposit request"""
+        if self.status != 'pending':
+            raise ValidationError("Only pending requests can be approved")
+            
+        self.user.wallet.deposit(self.amount)
+        self.status = 'verified'
+        self.save()
+        
+    def reject(self):
+        """Reject the deposit request"""
+        if self.status != 'pending':
+            raise ValidationError("Only pending requests can be rejected")
+            
+        self.status = 'rejected'
+        self.save()
+        
+    def clean(self):
+        """Model-level validation"""
+        super().clean()
+        
+        if self.amount <= 0:
+            raise ValidationError("Deposit amount must be positive")

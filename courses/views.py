@@ -8,7 +8,7 @@ from .serializers import (
     HallSerializer, ScheduleSlotSerializer, BookingSerializer
 )
 from django.db.models import Q
-from core.permissions import IsOwnerOrAdmin,IsStudent,IsTeacher,IsReception,IsAdmin
+from core.permissions import IsOwnerOrAdminOrReception,IsStudent,IsTeacher,IsReception,IsAdmin
 from django_filters.rest_framework import DjangoFilterBackend
 
 class DepartmentViewSet(viewsets.ModelViewSet):
@@ -18,12 +18,12 @@ class DepartmentViewSet(viewsets.ModelViewSet):
     search_fields = ['name', 'description']
     
     def get_permissions(self):
-        if self.action in ['create', 'update', 'partial_update', 'destroy']:
+        if self.action in ['create', 'update', 'partial_update', 'destroy','bulk']:
             return [IsReception()]
         return [permissions.AllowAny()]
     
     def list(self, request, *args, **kwargs):
-                    # Get filtered queryset
+        # Get filtered queryset
         queryset = self.filter_queryset(self.get_queryset())
             
         if not queryset.exists():
@@ -147,23 +147,16 @@ class CourseViewSet(viewsets.ModelViewSet):
             if not course_type_id.isdigit():
                 errors['course_type'] = 'Must be an integer'
         
-        if teacher_id := params.get('teacher'):
-            if not teacher_id.isdigit():
-                errors['teacher'] = 'Must be an integer'
-        
         return errors
     
     def get_queryset(self):
         queryset = super().get_queryset()
         params = self.request.query_params
         
-        # Apply all filters
         if department_id := params.get('department'):
             queryset = queryset.filter(department_id=int(department_id))
         if course_type_id := params.get('course_type'):
             queryset = queryset.filter(course_type_id=int(course_type_id))
-        if teacher_id := params.get('teacher'):
-            queryset = queryset.filter(teacher_id=int(teacher_id))
         if certification := params.get('certification'):
             queryset = queryset.filter(certification_eligible=(certification.lower() == 'true'))
         if category := params.get('category'):
@@ -185,14 +178,16 @@ class HallViewSet(viewsets.ModelViewSet):
 
 
 class ScheduleSlotViewSet(viewsets.ModelViewSet):
-    queryset = ScheduleSlot.objects.all().select_related('course', 'hall')
+    queryset = ScheduleSlot.objects.all().select_related('course', 'hall', 'teacher')
     serializer_class = ScheduleSlotSerializer
     filter_backends = [filters.OrderingFilter, DjangoFilterBackend, filters.SearchFilter]
     filterset_fields = {
-        'course': ['exact']
+        'course': ['exact'],
+        'teacher': ['exact']
     }
-    search_fields = ['course__title', 'hall__name']
+    search_fields = ['course__title', 'hall__name', 'teacher__username']
     ordering_fields = ['start_time', 'end_time', 'valid_from', 'valid_until']
+
     
     def get_permissions(self):
         if self.action in ['create', 'update', 'partial_update', 'destroy']:
@@ -274,7 +269,7 @@ class BookingViewSet(viewsets.ModelViewSet):
         if self.action in ['approve', 'destroy']:
             return [IsReception()]
         elif self.action in ['update', 'partial_update']:
-            return [IsOwnerOrAdmin()]
+            return [IsOwnerOrAdminOrReception()]
         elif self.action == 'create':
             return [permissions.AllowAny()]  # Explicitly allow anyone to create
         return [permissions.AllowAny()]

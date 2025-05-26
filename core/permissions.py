@@ -7,29 +7,35 @@ class IsAdminUser(permissions.BasePermission):
     """
     def has_permission(self, request, view):
         return request.user and request.user.is_staff
-class IsOwnerOrAdmin(permissions.BasePermission):
+
+class IsAdminOrReception(permissions.BasePermission):
     """
-    Object-level permission to only allow owners of an object or admins to access it.
+    Allows access only to admin or reception users.
+    """
+    def has_permission(self, request, view):
+        return bool(
+            request.user and 
+            request.user.is_authenticated and 
+            (request.user.is_staff or request.user.user_type in ['admin', 'reception'])
+        )
+class IsOwnerOrAdminOrReception(permissions.BasePermission):
+    """
+    Object-level permission to allow owners, admins or reception staff.
     """
     def has_object_permission(self, request, view, obj):
-        # Admin permissions
-        if request.user.is_staff:
+        # Allow admin/reception
+        if request.user.is_staff or request.user.user_type in ['admin', 'reception']:
             return True
             
         # Check if object has a user attribute
         if hasattr(obj, 'user'):
             return obj.user == request.user
             
-        # Check if object has a requested_by attribute
-        if hasattr(obj, 'requested_by'):
-            return obj.requested_by == request.user
-            
-        # For Profile model
+        # Check if object has a user_id attribute
         if hasattr(obj, 'user_id'):
             return obj.user_id == request.user.id
             
         return False
-    # permissions.py
 class IsStudent(permissions.BasePermission):
     """
     Allows access only to student users.

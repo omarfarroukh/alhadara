@@ -1,21 +1,14 @@
 from decimal import Decimal
 from rest_framework import serializers
-from core.serializers import CustomUserSerializer
 from .models import Department, CourseType, Course, Hall, ScheduleSlot, Booking
-from django.db import models
-from django.db.models import Q
-from datetime import date
+from django.core.exceptions import ValidationError
+
+
 class DepartmentSerializer(serializers.ModelSerializer):
     class Meta:
         model = Department
         fields = ('id', 'name', 'description')
         
-    def validate_name(self, value):
-        if len(value) < 2:
-            raise serializers.ValidationError("Name must be at least 2 characters long.")
-        return value
-
-
 class CourseTypeSerializer(serializers.ModelSerializer):
     department_name = serializers.ReadOnlyField(source='department.name')
     
@@ -23,90 +16,111 @@ class CourseTypeSerializer(serializers.ModelSerializer):
         model = CourseType
         fields = ('id', 'name', 'department', 'department_name')
 
-
-class CourseSerializer(serializers.ModelSerializer):
-    department_name = serializers.ReadOnlyField(source='department.name')
-    course_type_name = serializers.ReadOnlyField(source='course_type.name')
-    teacher_name = serializers.ReadOnlyField(source='teacher.username', default=None)
-    
-    class Meta:
-        model = Course
-        fields = (
-            'id', 'title', 'description', 'price', 'duration', 
-            'max_students', 'certification_eligible', 'department', 
-            'department_name', 'course_type', 'course_type_name', 'teacher',
-            'teacher_name','category'
-        )
-    def validate(self, data):
-        department = data.get('department')
-        course_type = data.get('course_type')
-        
-        if course_type.department != department:
-            raise serializers.ValidationError(
-                "The selected course type does not belong to the specified department"
-            )
-        
-        return data
-    
-    def validate_duration(self, value):
-        """Ensure duration is at least 1 hour"""
-        if value < 1:
-            raise serializers.ValidationError("Duration must be at least 1 hour")
-        return value
-    
-    def validate_price(self, value):
-        if value <= 0:
-            raise serializers.ValidationError("Price must be positive")
-        return value
-    
-    def validate_max_students(self, value):
-        if value <= 0:
-            raise serializers.ValidationError('Max students must be positive')
-        return value
-
 class HallSerializer(serializers.ModelSerializer):
     hourly_rate = serializers.DecimalField(
         max_digits=10, 
         decimal_places=2,
         min_value=Decimal('0.01')  # Use Decimal instance for min_value
     )
-
     class Meta:
         model = Hall
         fields = ('id', 'name', 'capacity', 'location', 'hourly_rate')
-        
-    def validate_capacity(self, value):
-        if value <= 0:
-            raise serializers.ValidationError("Capacity must be positive")
-        return value
     
-    def validate_hourly_rate(self, value):
-        if value <= 0:
-            raise serializers.ValidationError("Hourly rate must be positive")
-        return value
-
+    def validate(self, data):
+        """
+        Use Django model validation by creating a temporary instance
+        This ensures the same validation rules apply to both API and admin
+        """
+        # Create a temporary instance for validation
+        instance = self.instance or Hall()
+        
+        # Update instance with validated data
+        for key, value in data.items():
+            setattr(instance, key, value)
+        
+        # Run model validation
+        try:
+            instance.clean()
+        except ValidationError as e:
+            # Convert Django ValidationError to DRF ValidationError
+            if hasattr(e, 'message_dict'):
+                # Field-specific errors
+                raise serializers.ValidationError(e.message_dict)
+            else:
+                # General errors
+                raise serializers.ValidationError(e.messages if hasattr(e, 'messages') else str(e))
+        
+        return data
+    
+class CourseSerializer(serializers.ModelSerializer):
+    department_name = serializers.ReadOnlyField(source='department.name')
+    course_type_name = serializers.ReadOnlyField(source='course_type.name')
+    
+    class Meta:
+        model = Course
+        fields = (
+            'id', 'title', 'description', 'price', 'duration', 
+            'max_students', 'certification_eligible', 'department', 
+            'department_name', 'course_type', 'course_type_name', 'category'
+        )
+    def validate(self, data):
+        """
+        Use Django model validation by creating a temporary instance
+        This ensures the same validation rules apply to both API and admin
+        """
+        # Create a temporary instance for validation
+        instance = self.instance or Course()
+        
+        # Update instance with validated data
+        for key, value in data.items():
+            setattr(instance, key, value)
+        
+        # Run model validation
+        try:
+            instance.clean()
+        except ValidationError as e:
+            # Convert Django ValidationError to DRF ValidationError
+            if hasattr(e, 'message_dict'):
+                # Field-specific errors
+                raise serializers.ValidationError(e.message_dict)
+            else:
+                # General errors
+                raise serializers.ValidationError(e.messages if hasattr(e, 'messages') else str(e))
+        
+        return data        
 
 class ScheduleSlotSerializer(serializers.ModelSerializer):
     course_title = serializers.ReadOnlyField(source='course.title')
     hall_name = serializers.ReadOnlyField(source='hall.name')
+    teacher_name = serializers.SerializerMethodField()
     duration_hours = serializers.SerializerMethodField()
     
     class Meta:
         model = ScheduleSlot
         fields = (
-            'id', 'course', 'course_title', 'hall', 'hall_name',
+            'id', 'course', 'course_title', 'hall', 'hall_name', 'teacher', 'teacher_name',
             'days_of_week', 'start_time', 'end_time', 'duration_hours',
             'recurring', 'valid_from', 'valid_until'
         )
         extra_kwargs = {
-            'valid_until': {'required': False}  # Not required for non-recurring
+            'valid_until': {'required': False},
+            'teacher': {'required': False}
         }
-
+    
+    def get_teacher_name(self, obj):
+        """Get teacher's full name instead of username"""
+        if obj.teacher:
+            return obj.teacher.get_full_name()
+        return None
+    
     def get_duration_hours(self, obj):
-        return (obj.end_time.hour - obj.start_time.hour) + \
-               (obj.end_time.minute - obj.start_time.minute)/60
+        """Calculate duration in hours including minutes"""
+        duration = (obj.end_time.hour - obj.start_time.hour) + \
+                  (obj.end_time.minute - obj.start_time.minute)/60
+        return round(duration, 2)
 
     def validate_days_of_week(self, value):
+        """Validate the days_of_week field"""
         if not value:
             raise serializers.ValidationError("At least one day must be selected")
             
@@ -117,83 +131,31 @@ class ScheduleSlotSerializer(serializers.ModelSerializer):
         return value
     
     def validate(self, data):
-        # Get fields from data or instance
-        valid_from = data.get('valid_from', getattr(self.instance, 'valid_from', None))
-        valid_until = data.get('valid_until', getattr(self.instance, 'valid_until', None))
-        recurring = data.get('recurring', getattr(self.instance, 'recurring', True))
-        days_of_week = data.get('days_of_week', getattr(self.instance, 'days_of_week', None))
-        start_time = data.get('start_time', getattr(self.instance, 'start_time', None))
-        end_time = data.get('end_time', getattr(self.instance, 'end_time', None))
-        course = data.get('course', getattr(self.instance, 'course', None))
-        hall = data.get('hall', getattr(self.instance, 'hall', None))
-
-        # Basic validations
-        if valid_from and valid_from < date.today() and not self.instance:
-            raise serializers.ValidationError("Cannot schedule in the past")
-            
-        if valid_until and valid_from and valid_until < valid_from:
-            raise serializers.ValidationError("End date must be after start date")
-            
-        if recurring and not valid_until:
-            raise serializers.ValidationError("Recurring slots require an end date")
-            
-        if not recurring and days_of_week and len(days_of_week) > 1:
-            raise serializers.ValidationError(
-                "Non-recurring slots can only have one day specified"
-            )
-
-        # Duration validation
-        if start_time and end_time:
-            if start_time >= end_time:
-                raise serializers.ValidationError("End time must be after start time")
-                
-            duration = (end_time.hour - start_time.hour) + \
-                      (end_time.minute - start_time.minute)/60
-            if duration > 8:  # Or use MAX_DURATION_HOURS constant
-                raise serializers.ValidationError("Time slots cannot exceed 8 hours")
-
-        # Course capacity vs hall capacity
-        if course and hall and course.max_students > hall.capacity:
-            raise serializers.ValidationError(
-                f"Course capacity ({course.max_students}) "
-                f"exceeds hall capacity ({hall.capacity})"
-            )
-
-        # Date range validation
-        if valid_from and valid_until and (valid_until - valid_from).days > 365:
-            raise serializers.ValidationError(
-                "Schedule slots cannot span more than 1 year"
-            )
-
-        # Overlap detection (optimized)
-        if hall and days_of_week and start_time and end_time:
-            overlap_qs = ScheduleSlot.objects.filter(
-                hall=hall,
-                days_of_week__overlap=days_of_week,
-                start_time__lt=end_time,
-                end_time__gt=start_time
-            )
-            
-            # Date range conditions
-            if valid_from and valid_until:
-                overlap_qs = overlap_qs.filter(
-                    Q(valid_until__gte=valid_from) | Q(valid_until__isnull=True),
-                    valid_from__lte=valid_until
-                )
-            elif valid_from:
-                overlap_qs = overlap_qs.filter(
-                    Q(valid_until__gte=valid_from) | Q(valid_until__isnull=True)
-                )
-            
-            if self.instance:
-                overlap_qs = overlap_qs.exclude(id=self.instance.id)
-            
-            if overlap_qs.exists():
-                raise serializers.ValidationError(
-                    "Hall already has scheduled slots during these times/days"
-                )
-
+        """
+        Use Django model validation by creating a temporary instance
+        This ensures the same validation rules apply to both API and admin
+        """
+        # Create a temporary instance for validation
+        instance = self.instance or ScheduleSlot()
+        
+        # Update instance with validated data
+        for key, value in data.items():
+            setattr(instance, key, value)
+        
+        # Run model validation
+        try:
+            instance.clean()
+        except ValidationError as e:
+            # Convert Django ValidationError to DRF ValidationError
+            if hasattr(e, 'message_dict'):
+                # Field-specific errors
+                raise serializers.ValidationError(e.message_dict)
+            else:
+                # General errors
+                raise serializers.ValidationError(e.messages if hasattr(e, 'messages') else str(e))
+        
         return data
+    
 class BookingSerializer(serializers.ModelSerializer):
     hall_name = serializers.ReadOnlyField(source='hall.name')
     requested_by_username = serializers.ReadOnlyField(source='requested_by.username', default=None)

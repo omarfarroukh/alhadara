@@ -20,11 +20,10 @@ from .models import (
 )
 from .serializers import (
     NewPasswordSerializer, PasswordResetRequestSerializer, SecurityAnswerValidationSerializer, SecurityQuestionSerializer, SecurityAnswerSerializer, InterestSerializer, 
-    ProfileSerializer, ProfileDetailSerializer, EWalletSerializer, DepositMethodSerializer,
-    BankTransferInfoSerializer, MoneyTransferInfoSerializer, DepositRequestSerializer
+    ProfileSerializer, ProfileDetailSerializer, EWalletSerializer, DepositMethodSerializer, DepositRequestSerializer
 )
 from rest_framework.permissions import AllowAny
-from .permissions import IsAdminUser, IsOwnerOrAdmin,IsStudent,IsTeacher,IsReception,IsAdmin
+from .permissions import IsStudent,IsReception, IsAdminOrReception, IsOwnerOrAdminOrReception
 from django_ratelimit.exceptions import Ratelimited
 from django.contrib.auth import get_user_model
 import secrets
@@ -45,13 +44,13 @@ class SecurityQuestionViewSet(viewsets.ModelViewSet):
     
     def get_permissions(self):
         if self.action in ['create', 'update', 'partial_update', 'destroy']:
-            return [IsAdminUser()]
+            return [IsAdminOrReception()]
         return [permissions.IsAuthenticated()]
 
 
 class SecurityAnswerViewSet(viewsets.ModelViewSet):
     serializer_class = SecurityAnswerSerializer
-    permission_classes = [IsOwnerOrAdmin]
+    permission_classes = [IsOwnerOrAdminOrReception]
     
     def get_queryset(self):
         user = self.request.user
@@ -76,13 +75,27 @@ class InterestViewSet(viewsets.ModelViewSet):
 
 class ProfileViewSet(viewsets.ModelViewSet):
     serializer_class = ProfileSerializer
-    permission_classes = [IsOwnerOrAdmin]
     filter_backends = [filters.SearchFilter]
     search_fields = ['full_name']
     
+    def get_permissions(self):
+        """
+        Instantiates and returns the list of permissions that this view requires.
+        """
+        if self.action in ['list']:
+            # For listing profiles, only admin/reception can view all
+            permission_classes = [permissions.IsAuthenticated, IsAdminOrReception]
+        elif self.action in ['retrieve']:
+            # For single profile view, allow owner or admin/reception
+            permission_classes = [permissions.IsAuthenticated, IsOwnerOrAdminOrReception]
+        else:
+            # For create/update/delete, use default permissions
+            permission_classes = [permissions.IsAuthenticated]
+        return [permission() for permission in permission_classes]
+    
     def get_queryset(self):
         user = self.request.user
-        if user.is_staff:
+        if user.is_staff or user.user_type in ['admin', 'reception']:
             return Profile.objects.all()
         return Profile.objects.filter(user=user)
     
@@ -134,7 +147,7 @@ class ProfileViewSet(viewsets.ModelViewSet):
 
 class EWalletViewSet(viewsets.ReadOnlyModelViewSet):
     serializer_class = EWalletSerializer
-    permission_classes = [IsOwnerOrAdmin]
+    permission_classes = [IsOwnerOrAdminOrReception]
     
     def get_queryset(self):
         user = self.request.user
@@ -151,7 +164,7 @@ class DepositMethodViewSet(viewsets.ReadOnlyModelViewSet):
 class DepositRequestViewSet(viewsets.ModelViewSet):
     parser_classes = (MultiPartParser, FormParser)
     serializer_class = DepositRequestSerializer
-    permission_classes = [IsAuthenticated, IsOwnerOrAdmin]
+    permission_classes = [IsAuthenticated, IsOwnerOrAdminOrReception]
     filter_backends = [filters.OrderingFilter]
     ordering_fields = ['created_at', 'status']
     ordering = ['-created_at']
@@ -248,31 +261,20 @@ class DepositRequestViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated, IsReception])
     def approve(self, request, pk=None):
         deposit_request = self.get_object()
-        if deposit_request.status != 'pending':
-            return Response(
-                {'error': 'Only pending requests can be approved'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        wallet = deposit_request.user.wallet
-        wallet.current_balance += deposit_request.amount
-        wallet.save()
-        
-        deposit_request.status = 'verified'
-        deposit_request.save()
-        return Response({'status': 'deposit approved'})
+        try:
+            deposit_request.approve()
+            return Response({'status': 'deposit approved'})
+        except ValidationError as e:
+            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
     
     @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated, IsReception])
     def reject(self, request, pk=None):
         deposit_request = self.get_object()
-        if deposit_request.status != 'pending':
-            return Response(
-                {'error': 'Only pending requests can be rejected'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        deposit_request.status = 'rejected'
-        deposit_request.save()
-        return Response({'status': 'deposit rejected'})
+        try:
+            deposit_request.reject()
+            return Response({'status': 'deposit rejected'})
+        except ValidationError as e:
+            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
      
 class PasswordResetViewSet(viewsets.ViewSet):
     """
