@@ -170,6 +170,7 @@ class MoneyTransferInfoAdmin(admin.ModelAdmin):
 
 @admin.register(DepositRequest)
 class DepositRequestAdmin(admin.ModelAdmin):
+    x=10
     list_display = ('user', 'deposit_method', 'amount', 'status', 'created_at')
     list_filter = ('status', 'deposit_method')
     search_fields = ('user__username', 'transaction_number')
