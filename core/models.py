@@ -165,8 +165,8 @@ class Profile(models.Model):
     gender = models.CharField(max_length=10, choices=GENDER_CHOICES, default='male')
     address = models.TextField(blank=True, null=True)  # Optional
     interests = models.ManyToManyField(Interest, through='ProfileInterest', blank=True)
-    university = models.OneToOneField(University,on_delete=models.CASCADE,related_name='profile')
-    studyfield = models.OneToOneField(StudyField,on_delete=models.CASCADE,related_name='profile')
+    university = models.ForeignKey(University, on_delete=models.SET_NULL, null=True, blank=True, related_name='profiles')
+    studyfield = models.ForeignKey(StudyField, on_delete=models.SET_NULL, null=True, blank=True, related_name='profiles')
 
     def __str__(self):
         return self.user.get_full_name() or str(self.user)
@@ -178,6 +178,17 @@ class Profile(models.Model):
         # Add any profile-specific validation here
         if self.birth_date and self.birth_date > timezone.now().date():
             raise ValidationError("Birth date cannot be in the future")
+
+                # Conditional validation for university and studyfield
+        if self.academic_status in ['undergraduate', 'graduate']:
+            if not self.university:
+                raise ValidationError("University is required for undergraduate/graduate students")
+            if not self.studyfield:
+                raise ValidationError("Field of study is required for undergraduate/graduate students")
+        else:
+            # Clear university and studyfield if not required
+            self.university = None
+            self.studyfield = None
             
 
 class ProfileInterest(models.Model):
