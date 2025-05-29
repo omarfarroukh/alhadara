@@ -5,7 +5,8 @@ from django.contrib.auth.admin import UserAdmin
 from .models import (
     User, SecurityQuestion, SecurityAnswer, Interest, 
     Profile, ProfileInterest, EWallet, DepositMethod,
-    BankTransferInfo, MoneyTransferInfo, DepositRequest
+    BankTransferInfo, MoneyTransferInfo, DepositRequest,
+    University,StudyField
 )
 
 @admin.register(User)
@@ -174,3 +175,11 @@ class DepositRequestAdmin(admin.ModelAdmin):
     list_display = ('user', 'deposit_method', 'amount', 'status', 'created_at')
     list_filter = ('status', 'deposit_method')
     search_fields = ('user__username', 'transaction_number')
+
+@admin.register(University)
+class UniversityAdmin(admin.ModelAdmin):
+    list_display =('name')
+    
+@admin.register(StudyField)
+class StudyFieldAdmin(admin.ModelAdmin):
+    list_display =('name')

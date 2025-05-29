@@ -10,7 +10,9 @@ from .serializers import (
 from django.db.models import Q
 from core.permissions import IsOwnerOrAdminOrReception,IsStudent,IsTeacher,IsReception,IsAdmin
 from django_filters.rest_framework import DjangoFilterBackend
+from django.contrib.auth import get_user_model
 
+User = get_user_model()
 class DepartmentViewSet(viewsets.ModelViewSet):
     queryset = Department.objects.all()
     serializer_class = DepartmentSerializer

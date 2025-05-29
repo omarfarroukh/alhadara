@@ -1,11 +1,13 @@
 from django.db import models
-from core.models import User
+from core.models import Interest, StudyField
 from django.db.models import Q
 from django.core.validators import MinValueValidator
 from decimal import Decimal
 from datetime import date
 from django.core.exceptions import ValidationError
+from django.contrib.auth import get_user_model
 
+User = get_user_model()
 class Department(models.Model):
     name = models.CharField(max_length=100, unique=True)
     description = models.TextField(blank=True, default='')
@@ -22,6 +24,16 @@ class CourseType(models.Model):
     
     def __str__(self):
         return f"{self.name}"
+class CourseTypeTag(models.Model):
+    course_type = models.ForeignKey(CourseType, on_delete=models.CASCADE, related_name='tags')
+    interest = models.ForeignKey(Interest, on_delete=models.CASCADE, null=True, blank=True)
+    study_field = models.ForeignKey(StudyField, on_delete=models.CASCADE, null=True, blank=True)
+
+    class Meta:
+        unique_together = ('course_type', 'interest', 'study_field')
+
+    def __str__(self):
+        return f"{self.course_type.name} - {self.interest or self.study_field}"
 
 class Hall(models.Model):
     name = models.CharField(max_length=100, unique=True)

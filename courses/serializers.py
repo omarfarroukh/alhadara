@@ -2,7 +2,9 @@ from decimal import Decimal
 from rest_framework import serializers
 from .models import Department, CourseType, Course, Hall, ScheduleSlot, Booking
 from django.core.exceptions import ValidationError
+from django.contrib.auth import get_user_model
 
+User = get_user_model()
 
 class DepartmentSerializer(serializers.ModelSerializer):
     class Meta:

@@ -13,14 +13,13 @@ from rest_framework.throttling import UserRateThrottle
 from .throttles import LoginRateThrottle
 from django_ratelimit.decorators import ratelimit
 from django.shortcuts import get_object_or_404
-from .models import (
-    User, SecurityQuestion, SecurityAnswer, Interest, 
+from .models import (SecurityQuestion, SecurityAnswer, Interest, 
     Profile, ProfileInterest, EWallet, DepositMethod,
-    BankTransferInfo, MoneyTransferInfo, DepositRequest
+    BankTransferInfo, MoneyTransferInfo, DepositRequest, StudyField, University
 )
 from .serializers import (
     NewPasswordSerializer, PasswordResetRequestSerializer, SecurityAnswerValidationSerializer, SecurityQuestionSerializer, SecurityAnswerSerializer, InterestSerializer, 
-    ProfileSerializer, ProfileDetailSerializer, EWalletSerializer, DepositMethodSerializer, DepositRequestSerializer, AddInterestSerializer,RemoveInterestSerializer
+    ProfileSerializer, EWalletSerializer, DepositMethodSerializer, DepositRequestSerializer, AddInterestSerializer,RemoveInterestSerializer, StudyFieldSerializer, UniversitySerializer
 )
 from rest_framework.permissions import AllowAny
 from .permissions import IsStudent,IsReception, IsAdminOrReception, IsOwnerOrAdminOrReception
@@ -72,6 +71,13 @@ class InterestViewSet(viewsets.ModelViewSet):
             return [IsStudent()]
         return [permissions.IsAuthenticated()]
 
+class UniversityViewSet(viewsets.ReadOnlyModelViewSet):
+    queryset = University.objects.all()
+    serializer_class = UniversitySerializer
+
+class StudyFieldViewSet(viewsets.ReadOnlyModelViewSet):
+    queryset = StudyField.objects.all()
+    serializer_class = StudyFieldSerializer
 
 class ProfileViewSet(viewsets.ModelViewSet):
     serializer_class = ProfileSerializer
@@ -95,13 +101,19 @@ class ProfileViewSet(viewsets.ModelViewSet):
     
     def get_queryset(self):
         user = self.request.user
+        base_qs = Profile.objects.select_related(
+            'user', 'university', 'studyfield'
+        ).prefetch_related(
+            'profileinterest_set__interest'
+        )
+
         if user.is_staff or user.user_type in ['admin', 'reception']:
-            return Profile.objects.all()
-        return Profile.objects.filter(user=user)
+            return base_qs
+        return base_qs.filter(user=user)
     
     def get_serializer_class(self):
         if self.action in ['retrieve']:
-            return ProfileDetailSerializer
+            return ProfileSerializer
         elif self.action == 'add_interest':
             return AddInterestSerializer
         elif self.action == 'remove_interest':

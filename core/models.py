@@ -134,6 +134,11 @@ class Interest(models.Model):
     
     def __str__(self):
         return self.name
+class University(models.Model):
+    name = models.CharField(max_length=255, unique=True)
+  
+class StudyField(models.Model):
+    name = models.CharField(max_length=255, unique=True)
 
 class Profile(models.Model):
     GENDER_CHOICES = (
@@ -141,13 +146,28 @@ class Profile(models.Model):
         ('female', 'Female')
     )
     
+    ACADEMIC_STATUS_CHOICES = [
+        ('high_school', 'High School'),
+        ('undergraduate', 'Undergraduate'),
+        ('graduate', 'Graduate'),
+        ('not_studying', 'Not Currently Studying')
+    ]
+    
+    academic_status = models.CharField(
+        max_length=20,
+        choices=ACADEMIC_STATUS_CHOICES,
+        blank=True,
+        null=True
+    )
+    
     user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='profile')
     birth_date = models.DateField(blank=True, null=True)  # Made optional
-    gender = models.CharField(max_length=10, choices=GENDER_CHOICES, default='other')
-    national_id = models.CharField(max_length=20, blank=True, null=True)  # Optional
+    gender = models.CharField(max_length=10, choices=GENDER_CHOICES, default='male')
     address = models.TextField(blank=True, null=True)  # Optional
     interests = models.ManyToManyField(Interest, through='ProfileInterest', blank=True)
-    
+    university = models.OneToOneField(University,on_delete=models.CASCADE,related_name='profile')
+    studyfield = models.OneToOneField(StudyField,on_delete=models.CASCADE,related_name='profile')
+
     def __str__(self):
         return self.user.get_full_name() or str(self.user)
     
@@ -159,8 +179,6 @@ class Profile(models.Model):
         if self.birth_date and self.birth_date > timezone.now().date():
             raise ValidationError("Birth date cannot be in the future")
             
-        if self.national_id and not self.national_id.isdigit():
-            raise ValidationError("National ID must contain only digits")
 
 class ProfileInterest(models.Model):
     profile = models.ForeignKey(Profile, on_delete=models.CASCADE)
@@ -172,7 +190,7 @@ class ProfileInterest(models.Model):
     
     def __str__(self):
         return f"{self.profile.user.get_full_name} - {self.interest.name} ({self.intensity})"
-
+  
 
 class EWallet(models.Model):
     user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='wallet')

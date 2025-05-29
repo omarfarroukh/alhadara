@@ -5,7 +5,7 @@ from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from djoser.serializers import UserCreateSerializer as BaseUserCreateSerializer, UserSerializer
 from .models import ( SecurityQuestion, SecurityAnswer, Interest, 
     Profile, ProfileInterest, EWallet, DepositMethod,
-    BankTransferInfo, MoneyTransferInfo, DepositRequest
+    BankTransferInfo, MoneyTransferInfo, DepositRequest, StudyField, University
 )
 from django.contrib.auth import get_user_model
 User = get_user_model()
@@ -222,7 +222,17 @@ class NewPasswordSerializer(serializers.Serializer):
                 raise serializers.ValidationError({"new_password": e.detail})
                 
             return data        
-        
+    
+class UniversitySerializer(serializers.ModelSerializer):
+    class Meta:
+        model = University
+        fields = ['id', 'name']
+
+class StudyFieldSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = StudyField
+        fields = ['id', 'name']
+
 class InterestSerializer(serializers.ModelSerializer):
     class Meta:
         model = Interest
@@ -249,19 +259,20 @@ class ProfileInterestSerializer(serializers.ModelSerializer):
 
 class ProfileSerializer(serializers.ModelSerializer):
     interests = ProfileInterestSerializer(source='profileinterest_set', many=True, read_only=True)
-    
+    full_name = serializers.CharField(source='user.get_full_name', read_only=True)
+    studyfield = serializers.PrimaryKeyRelatedField(queryset=StudyField.objects.all(), required=False, allow_null=True)
+    university = serializers.PrimaryKeyRelatedField(queryset=University.objects.all(), required=False, allow_null=True)
+    university_name = serializers.CharField(source='university.name', read_only=True)
+    studyfield_name = serializers.CharField(source='studyfield.name', read_only=True)
+    academic_status = serializers.ChoiceField(choices=Profile.ACADEMIC_STATUS_CHOICES, required=False, allow_null=True)
     class Meta:
         model = Profile
         fields = (
-            'id', 'birth_date', 'gender', 
-            'national_id', 'address', 'interests'
+            'id', 'birth_date', 'gender', 'address', 'academic_status',
+            'university', 'studyfield', 'interests', 'full_name','university_name','studyfield_name'
         )
-
-class ProfileDetailSerializer(ProfileSerializer):
-    user = CustomUserSerializer(read_only=True)
-    
-    class Meta(ProfileSerializer.Meta):
-        fields = ProfileSerializer.Meta.fields + ('user',)
+        read_only_fields = ['id']
+        
 
 class EWalletSerializer(serializers.ModelSerializer):
     user_username = serializers.ReadOnlyField(source='user.username')
