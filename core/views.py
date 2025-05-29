@@ -6,13 +6,10 @@ from rest_framework.parsers import MultiPartParser, FormParser
 from drf_spectacular.utils import extend_schema,OpenApiExample, OpenApiResponse
 from django.utils.crypto import get_random_string
 from django.utils import timezone
-import os
 from rest_framework.permissions import IsAuthenticated
-from django.conf import settings
-from rest_framework.throttling import UserRateThrottle
 from .throttles import LoginRateThrottle
+from rest_framework.generics import RetrieveAPIView
 from django_ratelimit.decorators import ratelimit
-from django.shortcuts import get_object_or_404
 from .models import (SecurityQuestion, SecurityAnswer, Interest, 
     Profile, ProfileInterest, EWallet, DepositMethod,
     BankTransferInfo, MoneyTransferInfo, DepositRequest, StudyField, University
@@ -24,6 +21,7 @@ from .serializers import (
 from rest_framework.permissions import AllowAny
 from .permissions import IsStudent,IsReception, IsAdminOrReception, IsOwnerOrAdminOrReception
 from django_ratelimit.exceptions import Ratelimited
+from rest_framework.exceptions import NotFound
 from django.contrib.auth import get_user_model
 import secrets
 import logging
@@ -164,6 +162,23 @@ class ProfileViewSet(viewsets.ModelViewSet):
         except ProfileInterest.DoesNotExist:
             return Response({'error': 'Interest not found for this profile'}, status=status.HTTP_404_NOT_FOUND)
 
+class UserProfileView(RetrieveAPIView):
+    serializer_class = ProfileSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        return Profile.objects.select_related(
+            'user', 'university', 'studyfield'
+        ).prefetch_related(
+            'profileinterest_set__interest'
+        )
+
+    def get_object(self):
+        try:
+            return self.get_queryset().get(user=self.request.user)
+        except Profile.DoesNotExist:
+            raise NotFound("Profile not found")
+
 class EWalletViewSet(viewsets.ReadOnlyModelViewSet):
     serializer_class = EWalletSerializer
     permission_classes = [IsOwnerOrAdminOrReception]
@@ -173,7 +188,6 @@ class EWalletViewSet(viewsets.ReadOnlyModelViewSet):
         if user.is_staff:
             return EWallet.objects.all()
         return EWallet.objects.filter(user=user)
-
 
 class DepositMethodViewSet(viewsets.ReadOnlyModelViewSet):
     queryset = DepositMethod.objects.filter(is_active=True)

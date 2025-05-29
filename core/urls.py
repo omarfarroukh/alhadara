@@ -2,7 +2,7 @@ from django.urls import path, include
 from rest_framework.routers import DefaultRouter
 from rest_framework_simplejwt.views import TokenRefreshView, TokenVerifyView
 from .views import (
-    PasswordResetViewSet, SecurityQuestionViewSet, SecurityAnswerViewSet, InterestViewSet,
+    PasswordResetViewSet, SecurityQuestionViewSet, SecurityAnswerViewSet, InterestViewSet,UserProfileView,
     ProfileViewSet, EWalletViewSet, DepositMethodViewSet, DepositRequestViewSet, CustomTokenObtainPairView, StudyFieldViewSet, UniversityViewSet
 )
 
@@ -23,7 +23,7 @@ urlpatterns = [
     path('auth/jwt/create/', CustomTokenObtainPairView.as_view(), name='jwt-create'),
     path('auth/jwt/refresh/', TokenRefreshView.as_view(), name='jwt-refresh'),
     path('auth/jwt/verify/', TokenVerifyView.as_view(), name='jwt-verify'),
-    
+    path('profile/me/', UserProfileView.as_view(), name='user-profile'),
     # Router URLs
     path('', include(router.urls)),
 ]
