@@ -172,23 +172,42 @@ class Profile(models.Model):
         return self.user.get_full_name() or str(self.user)
     
     def clean(self):
-        """Model-level validation"""
         super().clean()
         
-        # Add any profile-specific validation here
+        # Rule 1: Birth date validation
         if self.birth_date and self.birth_date > timezone.now().date():
-            raise ValidationError("Birth date cannot be in the future")
+            raise ValidationError({"birth_date": "Birth date cannot be in the future."})
 
-                # Conditional validation for university and studyfield
-        if self.academic_status in ['undergraduate', 'graduate']:
+        # Rule 2: University/studyfield required for undergrad/graduate
+        if self.academic_status in ["undergraduate", "graduate"]:
             if not self.university:
-                raise ValidationError("University is required for undergraduate/graduate students")
+                raise ValidationError({"university": "Required for undergraduate/graduate students."})
             if not self.studyfield:
-                raise ValidationError("Field of study is required for undergraduate/graduate students")
+                raise ValidationError({"studyfield": "Required for undergraduate/graduate students."})
         else:
-            # Clear university and studyfield if not required
             self.university = None
             self.studyfield = None
+
+        # Rule 3: Validate academic status transitions
+        if self.pk:  # Only check if this is an existing profile (not new)
+            old_status = Profile.objects.get(pk=self.pk).academic_status
+            new_status = self.academic_status
+            
+            # Define allowed transitions
+            allowed_transitions = {
+                "high_school": ["undergraduate", "not_studying"],
+                "undergraduate": ["graduate"],
+                "not_studying": ["high_school","undergaduate"],
+            }
+            
+            if old_status in allowed_transitions and new_status not in allowed_transitions[old_status]:
+                raise ValidationError(
+                    {"academic_status": f"Cannot change status from {old_status} to {new_status}."}
+                )
+
+    def save(self, *args, **kwargs):
+        self.full_clean()
+        super().save(*args, **kwargs)
             
 
 class ProfileInterest(models.Model):
