@@ -109,6 +109,7 @@ TEMPLATES = [
 ]
 
 ASGI_APPLICATION = 'alhadara.asgi.application'
+WSGI_APPLICATION = 'alhadara.wsgi.application'  
 
 AWS_ACCESS_KEY_ID = os.environ['AWS_ACCESS_KEY_ID']
 AWS_SECRET_ACCESS_KEY = os.environ['AWS_SECRET_ACCESS_KEY']
