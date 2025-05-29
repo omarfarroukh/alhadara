@@ -178,8 +178,8 @@ class DepositRequestAdmin(admin.ModelAdmin):
 
 @admin.register(University)
 class UniversityAdmin(admin.ModelAdmin):
-    list_display =('name')
+    list_display =['name']
     
 @admin.register(StudyField)
 class StudyFieldAdmin(admin.ModelAdmin):
-    list_display =('name')
+    list_display =['name']
