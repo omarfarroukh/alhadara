@@ -7,9 +7,11 @@ from .models import ( ProfileImage, SecurityQuestion, SecurityAnswer, Interest,
     Profile, ProfileInterest, EWallet, DepositMethod,
     BankTransferInfo, MoneyTransferInfo, DepositRequest, StudyField, University
 )
+from django.core.exceptions import ValidationError as DjangoValidationError
+from rest_framework.exceptions import ValidationError as DRFValidationError
 from django.contrib.auth import get_user_model
-User = get_user_model()
 from .validators import validate_password_strength
+User = get_user_model()
 
 class CustomUserCreateSerializer(serializers.ModelSerializer):
     access = serializers.SerializerMethodField(read_only=True)
@@ -288,6 +290,14 @@ class ProfileSerializer(serializers.ModelSerializer):
         validated_data['user'] = self.context['request'].user
         return super().create(validated_data)
         
+    def update(self, instance, validated_data):
+        for attr, value in validated_data.items():
+            setattr(instance, attr, value)
+        try:
+            instance.save()
+        except DjangoValidationError as e:
+            raise DRFValidationError(e.message_dict)
+        return instance
 
 class EWalletSerializer(serializers.ModelSerializer):
     user_username = serializers.ReadOnlyField(source='user.username')
