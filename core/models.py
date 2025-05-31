@@ -6,6 +6,7 @@ from django.core.validators import MinValueValidator, MaxValueValidator
 from django.utils import timezone
 from .validators import syrian_phone_validator
 from django.core.exceptions import ValidationError
+from django.core.files.images import get_image_dimensions
 from django.contrib.auth.hashers import make_password, is_password_usable
 
 
@@ -212,6 +213,27 @@ class Profile(models.Model):
 class ProfileImage(models.Model):
     profile = models.OneToOneField(Profile, on_delete=models.CASCADE,related_name='image')
     image = models.ImageField(upload_to='profile/images')   
+    
+    def clean(self):
+        super().clean()
+
+        # Max file size: 5MB (you can adjust this)
+        max_file_size = 5 * 1024 * 1024
+        if self.image.size > max_file_size:
+            raise ValidationError("Image file too large ( > 5MB )")
+
+        # Optionally validate dimensions (min/max)
+        width, height = get_image_dimensions(self.image)
+        if width < 300 or height < 300:
+            raise ValidationError("Image is too small. Minimum dimensions are 300x300px.")
+
+        if width > 5000 or height > 5000:
+            raise ValidationError("Image is too large. Maximum dimensions are 5000x5000px.")
+
+    def save(self, *args, **kwargs):
+        self.full_clean()  # Calls `clean()` before saving
+        super().save(*args, **kwargs)
+
    
     
 class ProfileInterest(models.Model):
