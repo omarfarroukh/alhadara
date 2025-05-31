@@ -95,6 +95,7 @@ gunicorn = "*"
 channels-redis = "*"
 twisted = {extras = ["http2", "tls"], version = "*"}
 uvicorn = "*"
+whitenoise = "*"
 
 [dev-packages]
 

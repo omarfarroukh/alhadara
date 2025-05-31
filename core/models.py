@@ -209,7 +209,11 @@ class Profile(models.Model):
         self.full_clean()
         super().save(*args, **kwargs)
             
-
+class ProfileImage(models.Model):
+    profile = models.OneToOneField(Profile, on_delete=models.CASCADE,related_name='image')
+    image = models.ImageField(upload_to='profile/images')   
+   
+    
 class ProfileInterest(models.Model):
     profile = models.ForeignKey(Profile, on_delete=models.CASCADE)
     interest = models.ForeignKey(Interest, on_delete=models.CASCADE)

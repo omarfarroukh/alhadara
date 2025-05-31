@@ -2,7 +2,7 @@ from django.urls import path, include
 from rest_framework.routers import DefaultRouter
 from rest_framework_simplejwt.views import TokenRefreshView, TokenVerifyView
 from .views import (
-    PasswordResetViewSet, SecurityQuestionViewSet, SecurityAnswerViewSet, InterestViewSet,UserProfileView,
+    PasswordResetViewSet, ProfileImageViewSet, SecurityQuestionViewSet, SecurityAnswerViewSet, InterestViewSet,UserProfileView,
     ProfileViewSet, EWalletViewSet, DepositMethodViewSet, DepositRequestViewSet, CustomTokenObtainPairView, StudyFieldViewSet, UniversityViewSet
 )
 
@@ -11,6 +11,7 @@ router.register(r'security-questions', SecurityQuestionViewSet)
 router.register(r'security-answers', SecurityAnswerViewSet, basename='security-answer')
 router.register(r'interests', InterestViewSet)
 router.register(r'profiles', ProfileViewSet, basename='profile')
+router.register(r'profile-images', ProfileImageViewSet, basename='profileimage')
 router.register(r'wallets', EWalletViewSet, basename='wallet')
 router.register(r'deposit-methods', DepositMethodViewSet)
 router.register(r'deposit-requests', DepositRequestViewSet, basename='deposit-request')

@@ -10,18 +10,20 @@ from rest_framework.permissions import IsAuthenticated
 from .throttles import LoginRateThrottle
 from rest_framework.generics import RetrieveAPIView
 from django_ratelimit.decorators import ratelimit
-from .models import (SecurityQuestion, SecurityAnswer, Interest, 
+from .models import (ProfileImage, SecurityQuestion, SecurityAnswer, Interest, 
     Profile, ProfileInterest, EWallet, DepositMethod,
     BankTransferInfo, MoneyTransferInfo, DepositRequest, StudyField, University
 )
 from .serializers import (
-    NewPasswordSerializer, PasswordResetRequestSerializer, SecurityAnswerValidationSerializer, SecurityQuestionSerializer, SecurityAnswerSerializer, InterestSerializer, 
+    NewPasswordSerializer, PasswordResetRequestSerializer, ProfileImageSerializer, SecurityAnswerValidationSerializer, SecurityQuestionSerializer, SecurityAnswerSerializer, InterestSerializer, 
     ProfileSerializer, EWalletSerializer, DepositMethodSerializer, DepositRequestSerializer, AddInterestSerializer,RemoveInterestSerializer, StudyFieldSerializer, UniversitySerializer
 )
 from rest_framework.permissions import AllowAny
 from .permissions import IsStudent,IsReception, IsAdminOrReception, IsOwnerOrAdminOrReception
 from django_ratelimit.exceptions import Ratelimited
 from rest_framework.exceptions import NotFound
+from django.shortcuts import render
+from django.views.decorators.clickjacking import xframe_options_exempt
 from django.contrib.auth import get_user_model
 import secrets
 import logging
@@ -102,7 +104,8 @@ class ProfileViewSet(viewsets.ModelViewSet):
         base_qs = Profile.objects.select_related(
             'user', 'university', 'studyfield'
         ).prefetch_related(
-            'profileinterest_set__interest'
+            'profileinterest_set__interest',
+            'image'
         )
 
         if user.is_staff or user.user_type in ['admin', 'reception']:
@@ -170,7 +173,8 @@ class UserProfileView(RetrieveAPIView):
         return Profile.objects.select_related(
             'user', 'university', 'studyfield'
         ).prefetch_related(
-            'profileinterest_set__interest'
+            'profileinterest_set__interest',
+            'image'
         )
 
     def get_object(self):
@@ -178,6 +182,18 @@ class UserProfileView(RetrieveAPIView):
             return self.get_queryset().get(user=self.request.user)
         except Profile.DoesNotExist:
             raise NotFound("Profile not found")
+
+class ProfileImageViewSet(viewsets.ModelViewSet):
+    serializer_class = ProfileImageSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        user = self.request.user
+        return ProfileImage.objects.filter(profile__user=user)
+
+    def perform_create(self, serializer):
+        profile = self.request.user.profile
+        serializer.save(profile=profile)
 
 class EWalletViewSet(viewsets.ReadOnlyModelViewSet):
     serializer_class = EWalletSerializer

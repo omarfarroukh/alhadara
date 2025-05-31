@@ -3,7 +3,7 @@ from django.contrib.auth.hashers import make_password
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from djoser.serializers import UserCreateSerializer as BaseUserCreateSerializer, UserSerializer
-from .models import ( SecurityQuestion, SecurityAnswer, Interest, 
+from .models import ( ProfileImage, SecurityQuestion, SecurityAnswer, Interest, 
     Profile, ProfileInterest, EWallet, DepositMethod,
     BankTransferInfo, MoneyTransferInfo, DepositRequest, StudyField, University
 )
@@ -257,6 +257,14 @@ class ProfileInterestSerializer(serializers.ModelSerializer):
         model = ProfileInterest
         fields = ('interest', 'interest_name', 'interest_category', 'intensity')
 
+
+
+class ProfileImageSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ProfileImage
+        fields = ['id', 'image']
+        
+
 class ProfileSerializer(serializers.ModelSerializer):
     interests = ProfileInterestSerializer(source='profileinterest_set', many=True, read_only=True)
     full_name = serializers.CharField(source='user.get_full_name', read_only=True)
@@ -265,10 +273,12 @@ class ProfileSerializer(serializers.ModelSerializer):
     university_name = serializers.CharField(source='university.name', read_only=True)
     studyfield_name = serializers.CharField(source='studyfield.name', read_only=True)
     academic_status = serializers.ChoiceField(choices=Profile.ACADEMIC_STATUS_CHOICES, required=False, allow_null=True)
+    image = ProfileImageSerializer(many=False, read_only=True)
+
     class Meta:
         model = Profile
         fields = (
-            'id', 'birth_date', 'gender', 'address', 'academic_status',
+            'id', 'birth_date', 'gender', 'address', 'academic_status','image',
             'university', 'studyfield', 'interests', 'full_name','university_name','studyfield_name'
         )
         read_only_fields = ['id']
