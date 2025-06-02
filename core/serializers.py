@@ -333,6 +333,14 @@ class DepositMethodSerializer(serializers.ModelSerializer):
     class Meta:
         model = DepositMethod
         fields = ('id', 'name', 'is_active', 'bank_info', 'transfer_info')
+        
+    def to_representation(self, instance):
+        representation = super().to_representation(instance)
+        if instance.name == 'bank_transfer':
+            representation.pop('transfer_info')
+        elif instance.name == 'money_transfer':
+            representation.pop('bank_info')
+        return representation
 
 class DepositRequestSerializer(serializers.ModelSerializer):
     user_phone = serializers.CharField(source='user.phone', read_only=True)
