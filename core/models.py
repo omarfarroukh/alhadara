@@ -166,8 +166,8 @@ class Profile(models.Model):
     gender = models.CharField(max_length=10, choices=GENDER_CHOICES, default='male')
     address = models.TextField(blank=True, null=True)  # Optional
     interests = models.ManyToManyField(Interest, through='ProfileInterest', blank=True)
-    university = models.ForeignKey(University, on_delete=models.SET_NULL, null=True, blank=True, related_name='profiles')
-    studyfield = models.ForeignKey(StudyField, on_delete=models.SET_NULL, null=True, blank=True, related_name='profiles')
+    university = models.ForeignKey(University, on_delete=models.SET_NULL, null=True, blank=True,default='Null', related_name='profiles')
+    studyfield = models.ForeignKey(StudyField, on_delete=models.SET_NULL, null=True, blank=True,default='Null', related_name='profiles')
 
     def __str__(self):
         return self.user.get_full_name() or str(self.user)

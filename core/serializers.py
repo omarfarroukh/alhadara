@@ -265,6 +265,15 @@ class ProfileImageSerializer(serializers.ModelSerializer):
     class Meta:
         model = ProfileImage
         fields = ['id', 'image']
+    
+    def validate(self, attrs):
+        try:
+            # Run model's clean() method during validation
+            instance = ProfileImage(**attrs)
+            instance.clean()
+        except DjangoValidationError as e:
+            raise serializers.ValidationError(e.message_dict)  # Convert to DRF error
+        return attrs
         
 
 class ProfileSerializer(serializers.ModelSerializer):

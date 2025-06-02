@@ -8,6 +8,7 @@ from django.utils.crypto import get_random_string
 from django.utils import timezone
 from rest_framework.permissions import IsAuthenticated
 from .throttles import LoginRateThrottle
+from drf_spectacular.types import OpenApiTypes
 from rest_framework.generics import RetrieveAPIView
 from django_ratelimit.decorators import ratelimit
 from .models import (ProfileImage, SecurityQuestion, SecurityAnswer, Interest, 
@@ -194,6 +195,15 @@ class ProfileImageViewSet(viewsets.ModelViewSet):
     def perform_create(self, serializer):
         profile = self.request.user.profile
         serializer.save(profile=profile)
+    
+    def create(self, request, *args, **kwargs):
+        profile = request.user.profile
+        if hasattr(profile, 'image'):
+            return Response(
+                {"error": "Profile image already exists. Use PUT to update."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        return super().create(request, *args, **kwargs)
 
 class EWalletViewSet(viewsets.ReadOnlyModelViewSet):
     serializer_class = EWalletSerializer
@@ -213,22 +223,22 @@ class DepositMethodViewSet(viewsets.ReadOnlyModelViewSet):
 class DepositRequestViewSet(viewsets.ModelViewSet):
     parser_classes = (MultiPartParser, FormParser)
     serializer_class = DepositRequestSerializer
-    permission_classes = [IsAuthenticated, IsOwnerOrAdminOrReception]
+    permission_classes = [IsAuthenticated]
     filter_backends = [filters.OrderingFilter]
     ordering_fields = ['created_at', 'status']
     ordering = ['-created_at']
-    
+
     def get_queryset(self):
         user = self.request.user
-        if user.is_staff:
+        if IsAdminOrReception().has_permission(self.request, self):
             return DepositRequest.objects.all()
         return DepositRequest.objects.filter(user=user)
-    
+
     def get_serializer_context(self):
         context = super().get_serializer_context()
         context['request'] = self.request
         return context
-    
+
     @extend_schema(
         request={
             'multipart/form-data': {
@@ -239,75 +249,46 @@ class DepositRequestViewSet(viewsets.ModelViewSet):
                         'format': 'binary',
                         'description': 'Upload receipt screenshot (JPG/PNG, max 5MB)'
                     },
-                    'deposit_method': {
-                        'type': 'integer',
-                        'description': 'ID of the deposit method'
-                    },
-                    'transaction_number': {
-                        'type': 'string',
-                        'description': 'Transaction reference number'
-                    },
-                    'amount': {
-                        'type': 'number',
-                        'description': 'Deposit amount'
-                    }
+                    'deposit_method': {'type': 'integer', 'description': 'Deposit method ID'},
+                    'transaction_number': {'type': 'string', 'description': 'Transaction reference'},
+                    'amount': {'type': 'number', 'description': 'Deposit amount'}
                 },
                 'required': ['screenshot_path', 'deposit_method', 'transaction_number', 'amount']
             }
         },
-        description="Create a new deposit request with file upload"
+        description="Create a new deposit request with receipt upload"
     )
     def create(self, request, *args, **kwargs):
         if not request.user.is_authenticated:
-            return Response(
-                {'error': 'Authentication required'},
-                status=status.HTTP_401_UNAUTHORIZED
-            )
-            
-        if 'screenshot_path' not in request.FILES:
-            return Response(
-                {'error': 'screenshot_path is required'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
+            return Response({'error': 'Authentication required'}, status=status.HTTP_401_UNAUTHORIZED)
 
-        # Get the file
+        if 'screenshot_path' not in request.FILES:
+            return Response({'error': 'screenshot_path is required'}, status=status.HTTP_400_BAD_REQUEST)
+
         screenshot_file = request.FILES['screenshot_path']
-        
-        # Validate file
+
         if screenshot_file.size > 5 * 1024 * 1024:
-            return Response(
-                {'error': 'File too large (max 5MB)'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
+            return Response({'error': 'File too large (max 5MB)'}, status=status.HTTP_400_BAD_REQUEST)
+
         if not screenshot_file.name.lower().endswith(('.jpg', '.jpeg', '.png')):
-            return Response(
-                {'error': 'Only JPG/PNG files allowed'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        # Create the object directly
+            return Response({'error': 'Only JPG/PNG files allowed'}, status=status.HTTP_400_BAD_REQUEST)
+
         try:
             deposit_request = DepositRequest.objects.create(
                 user=request.user,
                 deposit_method_id=request.data.get('deposit_method'),
                 transaction_number=request.data.get('transaction_number'),
                 amount=request.data.get('amount'),
-                screenshot_path=screenshot_file,  # Pass the file directly
+                screenshot_path=screenshot_file,
                 status='pending'
             )
-            
-            # Serialize the created object for response
             serializer = self.get_serializer(deposit_request)
             return Response(serializer.data, status=status.HTTP_201_CREATED)
-            
         except Exception as e:
-            return Response(
-                {'error': f'Failed to create deposit request: {str(e)}'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
+            return Response({'error': f'Failed to create deposit request: {str(e)}'}, status=status.HTTP_400_BAD_REQUEST)
 
-    @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated, IsReception])
+    @extend_schema(request=None, responses={200: OpenApiTypes.OBJECT})
+    @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated, IsAdminOrReception])
     def approve(self, request, pk=None):
         deposit_request = self.get_object()
         try:
@@ -315,8 +296,9 @@ class DepositRequestViewSet(viewsets.ModelViewSet):
             return Response({'status': 'deposit approved'})
         except ValidationError as e:
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
-    
-    @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated, IsReception])
+
+    @extend_schema(request=None, responses={200: OpenApiTypes.OBJECT})
+    @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated, IsAdminOrReception])
     def reject(self, request, pk=None):
         deposit_request = self.get_object()
         try:
@@ -324,7 +306,7 @@ class DepositRequestViewSet(viewsets.ModelViewSet):
             return Response({'status': 'deposit rejected'})
         except ValidationError as e:
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
-     
+
 class PasswordResetViewSet(viewsets.ViewSet):
     """
     Password reset flow using phone number and security questions
