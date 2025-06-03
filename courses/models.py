@@ -335,3 +335,22 @@ class Booking(models.Model):
                 name='booking_start_before_end'
             ),
         ]
+
+class Wishlist(models.Model):
+    owner = models.OneToOneField(
+        User,
+        on_delete=models.CASCADE,
+        related_name='wishlist'
+    )
+    courses = models.ManyToManyField(
+        'Course',
+        related_name='wishlists',
+        blank=True
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name_plural = "Wishlists"
+
+    def __str__(self):
+        return f"Wishlist of {self.owner.phone}"

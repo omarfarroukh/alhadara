@@ -1,6 +1,6 @@
 from decimal import Decimal
 from rest_framework import serializers
-from .models import Department, CourseType, Course, Hall, ScheduleSlot, Booking
+from .models import Department, CourseType, Course, Hall, ScheduleSlot, Booking,Wishlist
 from django.core.exceptions import ValidationError
 from django.contrib.auth import get_user_model
 
@@ -216,3 +216,18 @@ class BookingSerializer(serializers.ModelSerializer):
         if self.context['request'].user.is_authenticated:
             validated_data['requested_by'] = self.context['request'].user
         return super().create(validated_data)
+
+class WishlistCourseSerializer(serializers.ModelSerializer):
+    course_type_name = serializers.ReadOnlyField(source='course_type.name')
+    class Meta:
+        model = Course
+        fields = (
+            'title','course_type_name'
+        )
+class WishlistSerializer(serializers.ModelSerializer):
+    courses = WishlistCourseSerializer(many=True,read_only=True)
+    
+    class Meta:
+        model = Wishlist
+        fields = ['id', 'owner', 'courses', 'created_at']
+        read_only_fields = ['owner', 'created_at']
