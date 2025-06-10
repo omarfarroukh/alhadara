@@ -6,7 +6,7 @@ from .models import (
     User, SecurityQuestion, SecurityAnswer, Interest, 
     Profile, ProfileInterest, EWallet, DepositMethod,
     BankTransferInfo, MoneyTransferInfo, DepositRequest,
-    University,StudyField
+    University,StudyField, Transaction
 )
 
 @admin.register(User)
@@ -183,3 +183,22 @@ class UniversityAdmin(admin.ModelAdmin):
 @admin.register(StudyField)
 class StudyFieldAdmin(admin.ModelAdmin):
     list_display =['name']
+
+@admin.register(Transaction)
+class TransactionAdmin(admin.ModelAdmin):
+    list_display = (
+        'reference_id', 'transaction_type', 'amount', 'sender', 
+        'receiver', 'status', 'created_at'
+    )
+    list_filter = ('transaction_type', 'status', 'created_at')
+    search_fields = (
+        'reference_id', 'sender__first_name', 'sender__last_name',
+        'receiver__first_name', 'receiver__last_name', 'description'
+    )
+    readonly_fields = ('created_at', 'updated_at')
+    date_hierarchy = 'created_at'
+    
+    def get_queryset(self, request):
+        return super().get_queryset(request).select_related(
+            'sender', 'receiver'
+        )

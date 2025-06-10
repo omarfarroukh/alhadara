@@ -8,6 +8,8 @@ from .validators import syrian_phone_validator
 from django.core.exceptions import ValidationError
 from django.core.files.images import get_image_dimensions
 from django.contrib.auth.hashers import make_password, is_password_usable
+from django.db.models.signals import pre_save
+from django.dispatch import receiver
 
 
 class CustomUserManager(BaseUserManager):
@@ -87,6 +89,21 @@ class User(AbstractBaseUser, PermissionsMixin):
     
     def get_short_name(self):
         return self.first_name
+
+@receiver(pre_save, sender=User)
+def ensure_single_admin(sender, instance, **kwargs):
+    """Ensure only one admin user exists in the system"""
+    if instance.is_superuser:
+        # Check if there's another superuser
+        other_admin = User.objects.filter(
+            is_superuser=True
+        ).exclude(pk=instance.pk).first()
+        
+        if other_admin:
+            raise ValidationError(
+                "Only one admin user is allowed in the system."
+            )
+
 class SecurityQuestion(models.Model):
     LANGUAGE_CHOICES = (
         ('ar', 'Arabic'),
@@ -360,3 +377,77 @@ class DepositRequest(models.Model):
         
         if self.amount <= 0:
             raise ValidationError("Deposit amount must be positive")
+
+class Transaction(models.Model):
+    TRANSACTION_TYPES = (
+        ('deposit', 'Deposit'),
+        ('withdrawal', 'Withdrawal'),
+        ('course_payment', 'Course Payment'),
+        ('course_refund', 'Course Refund'),
+        ('transfer', 'Transfer')
+    )
+    
+    STATUS_CHOICES = (
+        ('pending', 'Pending'),
+        ('completed', 'Completed'),
+        ('failed', 'Failed'),
+        ('cancelled', 'Cancelled')
+    )
+    
+    sender = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        related_name='sent_transactions'
+    )
+    receiver = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        related_name='received_transactions'
+    )
+    amount = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        validators=[MinValueValidator(Decimal('0.01'))]
+    )
+    transaction_type = models.CharField(
+        max_length=20,
+        choices=TRANSACTION_TYPES
+    )
+    status = models.CharField(
+        max_length=10,
+        choices=STATUS_CHOICES,
+        default='pending'
+    )
+    description = models.TextField(blank=True)
+    reference_id = models.CharField(
+        max_length=100,
+        unique=True,
+        help_text="Unique identifier for the transaction (e.g., ENR-123 for enrollment payments)"
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        ordering = ['-created_at']
+        
+    def __str__(self):
+        return f"{self.get_transaction_type_display()} - {self.amount} ({self.status})"
+    
+    def clean(self):
+        """Model-level validation"""
+        super().clean()
+        
+        if self.amount <= 0:
+            raise ValidationError("Amount must be positive")
+            
+        if self.transaction_type in ['transfer', 'course_payment', 'course_refund']:
+            if not self.sender or not self.receiver:
+                raise ValidationError("Both sender and receiver are required for this transaction type")
+            if self.sender == self.receiver:
+                raise ValidationError("Sender and receiver cannot be the same")
+    
+    def save(self, *args, **kwargs):
+        self.full_clean()
+        super().save(*args, **kwargs)

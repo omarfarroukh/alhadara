@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import Department, CourseType, Course, Hall, ScheduleSlot, Booking
+from .models import Department, CourseType, Course, Hall, ScheduleSlot, Booking, Enrollment
 from django.contrib.admin import SimpleListFilter
 from django.utils.dateformat import time_format
 from django import forms
@@ -96,3 +96,16 @@ class BookingAdmin(admin.ModelAdmin):
     list_filter = ('purpose', 'status', 'hall')
     search_fields = ('requested_by__username', 'hall__name')
     date_hierarchy = 'start_datetime'
+
+@admin.register(Enrollment)
+class EnrollmentAdmin(admin.ModelAdmin):
+    list_display = ('student', 'course', 'status', 'payment_status', 'enrollment_date')
+    list_filter = ('status', 'payment_status', 'enrollment_date')
+    search_fields = ('student__first_name', 'student__last_name', 'course__title')
+    readonly_fields = ('enrollment_date',)
+    raw_id_fields = ('student', 'course', 'schedule_slot')
+    
+    def get_queryset(self, request):
+        return super().get_queryset(request).select_related(
+            'student', 'course', 'schedule_slot'
+        )

@@ -2,10 +2,10 @@ from rest_framework import viewsets, permissions, filters, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework import serializers
-from .models import Department, CourseType, Course, Hall, ScheduleSlot, Booking,Wishlist
+from .models import Department, CourseType, Course, Hall, ScheduleSlot, Booking,Wishlist, Enrollment
 from .serializers import (
     DepartmentSerializer, CourseTypeSerializer, CourseSerializer,
-    HallSerializer, ScheduleSlotSerializer, BookingSerializer,WishlistSerializer
+    HallSerializer, ScheduleSlotSerializer, BookingSerializer,WishlistSerializer, EnrollmentSerializer
 )
 from django.db.models import Q
 from core.permissions import IsOwnerOrAdminOrReception,IsStudent,IsTeacher,IsReception,IsAdmin
@@ -403,6 +403,106 @@ class WishlistViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
         
+
+class EnrollmentViewSet(viewsets.ModelViewSet):
+    serializer_class = EnrollmentSerializer
+    permission_classes = [permissions.IsAuthenticated]
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    filterset_fields = ['status', 'payment_status', 'course']
+    search_fields = ['course__title', 'student__first_name', 'student__last_name']
+    ordering_fields = ['enrollment_date', 'status']
+    ordering = ['-enrollment_date']
+    
+    def get_permissions(self):
+        if self.action in ['create', 'update', 'partial_update', 'destroy']:
+            return [IsStudent()]
+        return [permissions.IsAuthenticated()]
+    
+    def get_queryset(self):
+        user = self.request.user
+        if user.is_staff or user.user_type == 'reception':
+            return Enrollment.objects.all().select_related(
+                'student', 'course', 'schedule_slot'
+            )
+        elif user.user_type == 'student':
+            return Enrollment.objects.filter(
+                student=user
+            ).select_related('course', 'schedule_slot')
+        return Enrollment.objects.none()
+    
+    def perform_create(self, serializer):
+        """Create enrollment and process initial payment"""
+        enrollment = serializer.save(student=self.request.user)
+        
+        # Process initial payment (e.g., 20% of course price)
+        initial_payment = enrollment.course.price * Decimal('0.2')
+        try:
+            enrollment.process_payment(initial_payment)
+        except ValidationError as e:
+            enrollment.delete()  # Rollback enrollment if payment fails
+            raise serializers.ValidationError(str(e))
+    
+    @action(detail=True, methods=['post'])
+    def process_payment(self, request, pk=None):
+        """Process additional payment from eWallet"""
+        enrollment = self.get_object()
+        amount = request.data.get('amount')
+        
+        if not amount:
+            return Response(
+                {'error': 'Amount is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            amount = Decimal(amount)
+        except (TypeError, ValueError):
+            return Response(
+                {'error': 'Invalid amount'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Calculate remaining balance
+        remaining_balance = enrollment.course.price - enrollment.amount_paid
+        
+        # Validate payment amount
+        if amount <= 0:
+            return Response(
+                {'error': 'Payment amount must be positive'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        if amount > remaining_balance:
+            return Response(
+                {
+                    'error': f'Payment amount exceeds remaining balance of {remaining_balance}',
+                    'remaining_balance': remaining_balance
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            enrollment.process_payment(amount)
+            return Response(self.get_serializer(enrollment).data)
+        except ValidationError as e:
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+    
+    @action(detail=True, methods=['post'])
+    def cancel(self, request, pk=None):
+        """Cancel enrollment and process refund"""
+        enrollment = self.get_object()
+        
+        try:
+            enrollment.cancel()
+            return Response(self.get_serializer(enrollment).data)
+        except ValidationError as e:
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_400_BAD_REQUEST
+            )
 
 class UnifiedSearchViewSet(viewsets.ViewSet):
     """

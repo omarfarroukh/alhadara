@@ -11,13 +11,14 @@ from .throttles import LoginRateThrottle
 from drf_spectacular.types import OpenApiTypes
 from rest_framework.generics import RetrieveAPIView
 from django_ratelimit.decorators import ratelimit
+from django_filters.rest_framework import DjangoFilterBackend
 from .models import (ProfileImage, SecurityQuestion, SecurityAnswer, Interest, 
     Profile, ProfileInterest, EWallet, DepositMethod,
-    BankTransferInfo, MoneyTransferInfo, DepositRequest, StudyField, University
+    BankTransferInfo, MoneyTransferInfo, DepositRequest, StudyField, University, Transaction
 )
 from .serializers import (
     NewPasswordSerializer, PasswordResetRequestSerializer, ProfileImageSerializer, SecurityAnswerValidationSerializer, SecurityQuestionSerializer, SecurityAnswerSerializer, InterestSerializer, 
-    ProfileSerializer, EWalletSerializer, DepositMethodSerializer, DepositRequestSerializer, AddInterestSerializer,RemoveInterestSerializer, StudyFieldSerializer, UniversitySerializer
+    ProfileSerializer, EWalletSerializer, DepositMethodSerializer, DepositRequestSerializer, AddInterestSerializer,RemoveInterestSerializer, StudyFieldSerializer, UniversitySerializer, TransactionSerializer
 )
 from rest_framework.permissions import AllowAny
 from .permissions import IsStudent,IsReception, IsAdminOrReception, IsOwnerOrAdminOrReception
@@ -28,6 +29,9 @@ from django.views.decorators.clickjacking import xframe_options_exempt
 from django.contrib.auth import get_user_model
 import secrets
 import logging
+from django.db.models import Q
+from decimal import Decimal
+import time
 
 logger = logging.getLogger(__name__)
 User = get_user_model()
@@ -205,15 +209,142 @@ class ProfileImageViewSet(viewsets.ModelViewSet):
             )
         return super().create(request, *args, **kwargs)
 
-class EWalletViewSet(viewsets.ReadOnlyModelViewSet):
-    serializer_class = EWalletSerializer
-    permission_classes = [IsOwnerOrAdminOrReception]
+class TransactionViewSet(viewsets.ReadOnlyModelViewSet):
+    serializer_class = TransactionSerializer
+    permission_classes = [permissions.IsAuthenticated]
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    filterset_fields = ['transaction_type', 'status']
+    search_fields = ['reference_id', 'description']
+    ordering_fields = ['created_at', 'amount']
+    ordering = ['-created_at']
     
     def get_queryset(self):
         user = self.request.user
-        if user.is_staff:
-            return EWallet.objects.all()
-        return EWallet.objects.filter(user=user)
+        if user.is_staff or user.user_type == 'reception':
+            return Transaction.objects.all().select_related('sender', 'receiver')
+        return Transaction.objects.filter(
+            Q(sender=user) | Q(receiver=user)
+        ).select_related('sender', 'receiver')
+
+class EWalletViewSet(viewsets.ModelViewSet):
+    serializer_class = EWalletSerializer
+    permission_classes = [permissions.IsAuthenticated]
+    
+    def get_queryset(self):
+        user = self.request.user
+        if user.is_staff or user.user_type == 'reception':
+            return EWallet.objects.all().select_related('owner')
+        return EWallet.objects.filter(owner=user).select_related('owner')
+    
+    def perform_create(self, serializer):
+        serializer.save(owner=self.request.user)
+    
+    @action(detail=True, methods=['post'])
+    def deposit(self, request, pk=None):
+        wallet = self.get_object()
+        amount = request.data.get('amount')
+        
+        if not amount:
+            return Response(
+                {'error': 'Amount is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            amount = Decimal(amount)
+        except (TypeError, ValueError):
+            return Response(
+                {'error': 'Invalid amount'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            # Create deposit request
+            deposit_request = DepositRequest.objects.create(
+                wallet=wallet,
+                amount=amount,
+                status='pending'
+            )
+            
+            # Create transaction record
+            Transaction.objects.create(
+                sender=None,  # External deposit
+                receiver=wallet.owner,
+                amount=amount,
+                transaction_type='deposit',
+                status='pending',
+                description=f"Deposit request for wallet {wallet.id}",
+                reference_id=f"DEP-{deposit_request.id}"
+            )
+            
+            return Response({
+                'message': 'Deposit request created successfully',
+                'deposit_request_id': deposit_request.id
+            }, status=status.HTTP_201_CREATED)
+            
+        except ValidationError as e:
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+    
+    @action(detail=True, methods=['post'])
+    def withdraw(self, request, pk=None):
+        wallet = self.get_object()
+        amount = request.data.get('amount')
+        
+        if not amount:
+            return Response(
+                {'error': 'Amount is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            amount = Decimal(amount)
+        except (TypeError, ValueError):
+            return Response(
+                {'error': 'Invalid amount'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        if amount <= 0:
+            return Response(
+                {'error': 'Withdrawal amount must be positive'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        if amount > wallet.balance:
+            return Response(
+                {'error': 'Insufficient balance'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            # Process withdrawal
+            wallet.balance -= amount
+            wallet.save()
+            
+            # Create transaction record
+            Transaction.objects.create(
+                sender=wallet.owner,
+                receiver=None,  # External withdrawal
+                amount=amount,
+                transaction_type='withdrawal',
+                status='completed',
+                description=f"Withdrawal from wallet {wallet.id}",
+                reference_id=f"WTH-{int(time.time())}"
+            )
+            
+            return Response({
+                'message': 'Withdrawal successful',
+                'new_balance': wallet.balance
+            })
+            
+        except ValidationError as e:
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_400_BAD_REQUEST
+            )
 
 class DepositMethodViewSet(viewsets.ReadOnlyModelViewSet):
     queryset = DepositMethod.objects.filter(is_active=True)

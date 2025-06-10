@@ -354,3 +354,231 @@ class Wishlist(models.Model):
 
     def __str__(self):
         return f"Wishlist of {self.owner.phone}"
+
+class Enrollment(models.Model):
+    STATUS_CHOICES = (
+        ('pending', 'Pending'),
+        ('active', 'Active'),
+        ('completed', 'Completed'),
+        ('cancelled', 'Cancelled')
+    )
+    
+    PAYMENT_STATUS_CHOICES = (
+        ('partial', 'Partial'),
+        ('paid', 'Paid'),
+        ('refunded', 'Refunded')
+    )
+    
+    student = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name='enrollments',
+        limit_choices_to={'user_type': 'student'}
+    )
+    course = models.ForeignKey(
+        Course,
+        on_delete=models.CASCADE,
+        related_name='enrollments'
+    )
+    schedule_slot = models.ForeignKey(
+        ScheduleSlot,
+        on_delete=models.SET_NULL,
+        null=True,
+        related_name='enrollments'
+    )
+    status = models.CharField(
+        max_length=10,
+        choices=STATUS_CHOICES,
+        default='pending'
+    )
+    payment_status = models.CharField(
+        max_length=10,
+        choices=PAYMENT_STATUS_CHOICES,
+        default='partial'
+    )
+    enrollment_date = models.DateTimeField(auto_now_add=True)
+    amount_paid = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        default=0
+    )
+    notes = models.TextField(blank=True, null=True)
+    
+    class Meta:
+        unique_together = ('student', 'course')
+        ordering = ['-enrollment_date']
+        
+    def __str__(self):
+        return f"{self.student.get_full_name()} - {self.course.title}"
+    
+    def clean(self):
+        """Model-level validation"""
+        super().clean()
+        
+        # Check if student is already enrolled
+        if not self.pk:  # Only check on creation
+            if Enrollment.objects.filter(
+                student=self.student,
+                course=self.course,
+                status__in=['pending', 'active']
+            ).exists():
+                raise ValidationError("Student is already enrolled in this course")
+        
+        # Check course capacity
+        active_enrollments = self.course.enrollments.filter(
+            status__in=['pending', 'active']
+        ).count()
+        if active_enrollments >= self.course.max_students:
+            raise ValidationError("Course has reached maximum capacity")
+        
+        # Validate schedule slot if provided
+        if self.schedule_slot:
+            if self.schedule_slot.course != self.course:
+                raise ValidationError("Schedule slot does not belong to the selected course")
+            
+            # Check if student has any schedule conflicts
+            student_enrollments = Enrollment.objects.filter(
+                student=self.student,
+                status__in=['pending', 'active'],
+                schedule_slot__isnull=False
+            ).exclude(pk=self.pk)
+            
+            for enrollment in student_enrollments:
+                if self._has_schedule_conflict(enrollment.schedule_slot):
+                    raise ValidationError(
+                        f"Schedule conflict with course: {enrollment.course.title}"
+                    )
+    
+    def _has_schedule_conflict(self, other_slot):
+        """Check if there's a schedule conflict between two slots"""
+        if not self.schedule_slot or not other_slot:
+            return False
+            
+        # Check if days overlap
+        common_days = set(self.schedule_slot.days_of_week) & set(other_slot.days_of_week)
+        if not common_days:
+            return False
+            
+        # Check if times overlap
+        return (
+            self.schedule_slot.start_time < other_slot.end_time and
+            self.schedule_slot.end_time > other_slot.start_time
+        )
+    
+    def update_status(self):
+        """Update status based on schedule slot dates"""
+        if not self.schedule_slot:
+            return
+            
+        today = date.today()
+        
+        if self.status != 'cancelled':
+            if today < self.schedule_slot.valid_from:
+                self.status = 'pending'
+            elif today >= self.schedule_slot.valid_from and (
+                not self.schedule_slot.valid_until or 
+                today <= self.schedule_slot.valid_until
+            ):
+                self.status = 'active'
+            elif self.schedule_slot.valid_until and today > self.schedule_slot.valid_until:
+                self.status = 'completed'
+    
+    def process_payment(self, amount):
+        """Process payment from student's eWallet to admin's eWallet"""
+        from core.models import EWallet, Transaction  # Import here to avoid circular import
+        
+        if amount <= 0:
+            raise ValidationError("Payment amount must be positive")
+            
+        if amount > self.course.price - self.amount_paid:
+            raise ValidationError("Payment amount exceeds remaining balance")
+            
+        # Get student's eWallet
+        try:
+            student_wallet = EWallet.objects.get(owner=self.student)
+        except EWallet.DoesNotExist:
+            raise ValidationError("Student does not have an eWallet")
+            
+        # Get admin's eWallet
+        try:
+            admin = User.objects.get(is_staff=True)
+            admin_wallet = EWallet.objects.get(owner=admin)
+        except (User.DoesNotExist, EWallet.DoesNotExist):
+            raise ValidationError("Admin eWallet not found")
+            
+        # Check if student's wallet has sufficient balance
+        if student_wallet.balance < amount:
+            raise ValidationError("Insufficient wallet balance")
+            
+        # Process payment
+        student_wallet.balance -= amount
+        admin_wallet.balance += amount
+        student_wallet.save()
+        admin_wallet.save()
+        
+        # Create transaction record
+        Transaction.objects.create(
+            sender=self.student,
+            receiver=admin,
+            amount=amount,
+            transaction_type='course_payment',
+            status='completed',
+            description=f"Payment for course: {self.course.title}",
+            reference_id=f"ENR-{self.id}"
+        )
+        
+        # Update enrollment payment
+        self.amount_paid += amount
+        if self.amount_paid >= self.course.price:
+            self.payment_status = 'paid'
+        else:
+            self.payment_status = 'partial'
+        self.save()
+    
+    def cancel(self):
+        """Cancel enrollment and process refund from admin's eWallet"""
+        if self.status == 'cancelled':
+            return
+            
+        # Process refund if payment was made
+        if self.amount_paid > 0:
+            from core.models import EWallet, Transaction  # Import here to avoid circular import
+            
+            try:
+                # Get wallets
+                student_wallet = EWallet.objects.get(owner=self.student)
+                admin = User.objects.get(is_staff=True)
+                admin_wallet = EWallet.objects.get(owner=admin)
+                
+                # Check if admin has sufficient balance for refund
+                if admin_wallet.balance < self.amount_paid:
+                    raise ValidationError("Insufficient admin wallet balance for refund")
+                
+                # Process refund
+                student_wallet.balance += self.amount_paid
+                admin_wallet.balance -= self.amount_paid
+                student_wallet.save()
+                admin_wallet.save()
+                
+                # Create refund transaction record
+                Transaction.objects.create(
+                    sender=admin,
+                    receiver=self.student,
+                    amount=self.amount_paid,
+                    transaction_type='course_refund',
+                    status='completed',
+                    description=f"Refund for cancelled course: {self.course.title}",
+                    reference_id=f"ENR-{self.id}-REF"
+                )
+                
+            except (EWallet.DoesNotExist, User.DoesNotExist):
+                raise ValidationError("Required wallets not found for refund")
+                
+        self.status = 'cancelled'
+        self.payment_status = 'refunded'
+        self.save()
+    
+    def save(self, *args, **kwargs):
+        self.full_clean()
+        self.update_status()  # Update status before saving
+        super().save(*args, **kwargs)

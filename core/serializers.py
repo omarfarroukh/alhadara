@@ -5,7 +5,7 @@ from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from djoser.serializers import UserCreateSerializer as BaseUserCreateSerializer, UserSerializer
 from .models import ( ProfileImage, SecurityQuestion, SecurityAnswer, Interest, 
     Profile, ProfileInterest, EWallet, DepositMethod,
-    BankTransferInfo, MoneyTransferInfo, DepositRequest, StudyField, University
+    BankTransferInfo, MoneyTransferInfo, DepositRequest, StudyField, University, Transaction
 )
 from django.core.exceptions import ValidationError as DjangoValidationError
 from rest_framework.exceptions import ValidationError as DRFValidationError
@@ -387,3 +387,26 @@ class DepositRequestSerializer(serializers.ModelSerializer):
         
         # Create the instance - Django will handle the file upload automatically
         return DepositRequest.objects.create(**validated_data)
+
+class TransactionSerializer(serializers.ModelSerializer):
+    sender_name = serializers.SerializerMethodField()
+    receiver_name = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = Transaction
+        fields = (
+            'id', 'reference_id', 'transaction_type', 'amount',
+            'sender', 'sender_name', 'receiver', 'receiver_name',
+            'status', 'description', 'created_at', 'updated_at'
+        )
+        read_only_fields = ('created_at', 'updated_at', 'reference_id')
+    
+    def get_sender_name(self, obj):
+        if obj.sender:
+            return obj.sender.get_full_name()
+        return None
+    
+    def get_receiver_name(self, obj):
+        if obj.receiver:
+            return obj.receiver.get_full_name()
+        return None

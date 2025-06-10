@@ -1,6 +1,6 @@
 from decimal import Decimal
 from rest_framework import serializers
-from .models import Department, CourseType, Course, Hall, ScheduleSlot, Booking,Wishlist
+from .models import Department, CourseType, Course, Hall, ScheduleSlot, Booking,Wishlist, Enrollment
 from django.core.exceptions import ValidationError
 from django.contrib.auth import get_user_model
 
@@ -224,6 +224,56 @@ class WishlistCourseSerializer(serializers.ModelSerializer):
         fields = (
             'title','course_type_name'
         )
+
+class EnrollmentSerializer(serializers.ModelSerializer):
+    student_name = serializers.ReadOnlyField(source='student.get_full_name')
+    course_title = serializers.ReadOnlyField(source='course.title')
+    schedule_slot_display = serializers.SerializerMethodField()
+    remaining_balance = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = Enrollment
+        fields = (
+            'id', 'student', 'student_name', 'course', 'course_title',
+            'schedule_slot', 'schedule_slot_display', 'status', 'payment_status',
+            'enrollment_date', 'amount_paid', 'remaining_balance', 'notes'
+        )
+        read_only_fields = ('enrollment_date', 'status', 'payment_status', 'amount_paid')
+    
+    def get_schedule_slot_display(self, obj):
+        if obj.schedule_slot:
+            return str(obj.schedule_slot)
+        return None
+    
+    def get_remaining_balance(self, obj):
+        return obj.course.price - obj.amount_paid
+    
+    def validate(self, data):
+        """
+        Use Django model validation by creating a temporary instance
+        This ensures the same validation rules apply to both API and admin
+        """
+        # Create a temporary instance for validation
+        instance = self.instance or Enrollment()
+        
+        # Update instance with validated data
+        for key, value in data.items():
+            setattr(instance, key, value)
+        
+        # Run model validation
+        try:
+            instance.clean()
+        except ValidationError as e:
+            # Convert Django ValidationError to DRF ValidationError
+            if hasattr(e, 'message_dict'):
+                # Field-specific errors
+                raise serializers.ValidationError(e.message_dict)
+            else:
+                # General errors
+                raise serializers.ValidationError(e.messages if hasattr(e, 'messages') else str(e))
+        
+        return data
+
 class WishlistSerializer(serializers.ModelSerializer):
     courses = WishlistCourseSerializer(many=True,read_only=True)
     
