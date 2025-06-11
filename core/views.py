@@ -240,55 +240,6 @@ class EWalletViewSet(viewsets.ModelViewSet):
         serializer.save(owner=self.request.user)
     
     @action(detail=True, methods=['post'])
-    def deposit(self, request, pk=None):
-        wallet = self.get_object()
-        amount = request.data.get('amount')
-        
-        if not amount:
-            return Response(
-                {'error': 'Amount is required'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        try:
-            amount = Decimal(amount)
-        except (TypeError, ValueError):
-            return Response(
-                {'error': 'Invalid amount'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        try:
-            # Create deposit request
-            deposit_request = DepositRequest.objects.create(
-                wallet=wallet,
-                amount=amount,
-                status='pending'
-            )
-            
-            # Create transaction record
-            Transaction.objects.create(
-                sender=None,  # External deposit
-                receiver=wallet.owner,
-                amount=amount,
-                transaction_type='deposit',
-                status='pending',
-                description=f"Deposit request for wallet {wallet.id}",
-                reference_id=f"DEP-{deposit_request.id}"
-            )
-            
-            return Response({
-                'message': 'Deposit request created successfully',
-                'deposit_request_id': deposit_request.id
-            }, status=status.HTTP_201_CREATED)
-            
-        except ValidationError as e:
-            return Response(
-                {'error': str(e)},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-    
-    @action(detail=True, methods=['post'])
     def withdraw(self, request, pk=None):
         wallet = self.get_object()
         amount = request.data.get('amount')
@@ -413,10 +364,22 @@ class DepositRequestViewSet(viewsets.ModelViewSet):
                 screenshot_path=screenshot_file,
                 status='pending'
             )
+            
+            # Create PENDING transaction record
+            Transaction.objects.create(
+                sender=None,  # External deposit
+                receiver=request.user,
+                amount=deposit_request.amount,
+                transaction_type='deposit',
+                status='pending',
+                description=f"Deposit request #{deposit_request.id}",
+                reference_id=f"DEP-{deposit_request.id}"
+            )
+            
             serializer = self.get_serializer(deposit_request)
             return Response(serializer.data, status=status.HTTP_201_CREATED)
         except Exception as e:
-            return Response({'error': f'Failed to create deposit request: {str(e)}'}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
     @extend_schema(request=None, responses={200: OpenApiTypes.OBJECT})
     @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated, IsAdminOrReception])

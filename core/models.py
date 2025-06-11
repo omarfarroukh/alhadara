@@ -8,7 +8,7 @@ from .validators import syrian_phone_validator
 from django.core.exceptions import ValidationError
 from django.core.files.images import get_image_dimensions
 from django.contrib.auth.hashers import make_password, is_password_usable
-from django.db.models.signals import pre_save
+from django.db.models.signals import pre_save, post_save
 from django.dispatch import receiver
 
 
@@ -274,11 +274,11 @@ class EWallet(models.Model):
         return f"Wallet for {self.user.get_full_name}"
     
     def deposit(self, amount):
-        """Deposit money into the wallet"""
+        """Deposit money into the wallet""" 
         if amount <= 0:
             raise ValidationError("Deposit amount must be positive")
             
-        self.current_balance += Decimal(amount)
+        self.current_balance += Decimal(amount).quantize(Decimal('0.00'))
         self.save()
         
     def withdraw(self, amount):
@@ -286,10 +286,11 @@ class EWallet(models.Model):
         if amount <= 0:
             raise ValidationError("Withdrawal amount must be positive")
             
+        amount = Decimal(amount).quantize(Decimal('0.00'))
         if self.current_balance < amount:
             raise ValidationError("Insufficient funds")
             
-        self.current_balance -= Decimal(amount)
+        self.current_balance -= amount
         self.save()
         
     def clean(self):
@@ -378,6 +379,26 @@ class DepositRequest(models.Model):
         if self.amount <= 0:
             raise ValidationError("Deposit amount must be positive")
 
+@receiver(post_save, sender=DepositRequest)
+def update_transaction_status(sender, instance, **kwargs):
+    """Update transaction status when deposit request status changes"""
+    try:
+        transaction = Transaction.objects.get(reference_id=f"DEP-{instance.id}")
+        
+        # Map deposit request status to transaction status
+        status_mapping = {
+            'pending': 'pending',
+            'verified': 'completed',
+            'rejected': 'failed'
+        }
+        
+        new_status = status_mapping.get(instance.status)
+        if new_status and transaction.status != new_status:
+            transaction.status = new_status
+            transaction.save()
+    except Transaction.DoesNotExist:
+        pass  # Transaction might not exist yet or was deleted
+
 class Transaction(models.Model):
     TRANSACTION_TYPES = (
         ('deposit', 'Deposit'),
@@ -398,12 +419,14 @@ class Transaction(models.Model):
         User,
         on_delete=models.SET_NULL,
         null=True,
+        blank=True,
         related_name='sent_transactions'
     )
     receiver = models.ForeignKey(
         User,
         on_delete=models.SET_NULL,
         null=True,
+        blank=True,
         related_name='received_transactions'
     )
     amount = models.DecimalField(
@@ -442,7 +465,18 @@ class Transaction(models.Model):
         if self.amount <= 0:
             raise ValidationError("Amount must be positive")
             
-        if self.transaction_type in ['transfer', 'course_payment', 'course_refund']:
+        # Different validation rules based on transaction type
+        if self.transaction_type == 'deposit':
+            if not self.receiver:
+                raise ValidationError("Receiver is required for deposit transactions")
+            # Sender can be null for deposits (external deposits)
+            
+        elif self.transaction_type == 'withdrawal':
+            if not self.sender:
+                raise ValidationError("Sender is required for withdrawal transactions")
+            # Receiver can be null for withdrawals (external withdrawals)
+            
+        elif self.transaction_type in ['transfer', 'course_payment', 'course_refund']:
             if not self.sender or not self.receiver:
                 raise ValidationError("Both sender and receiver are required for this transaction type")
             if self.sender == self.receiver:

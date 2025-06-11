@@ -487,6 +487,7 @@ class Enrollment(models.Model):
         """Process payment from student's eWallet to admin's eWallet"""
         from core.models import EWallet, Transaction  # Import here to avoid circular import
         
+        amount = amount.quantize(Decimal('0.00'))
         if amount <= 0:
             raise ValidationError("Payment amount must be positive")
             
@@ -495,24 +496,24 @@ class Enrollment(models.Model):
             
         # Get student's eWallet
         try:
-            student_wallet = EWallet.objects.get(owner=self.student)
+            student_wallet = EWallet.objects.get(user=self.student)
         except EWallet.DoesNotExist:
             raise ValidationError("Student does not have an eWallet")
             
         # Get admin's eWallet
         try:
             admin = User.objects.get(is_staff=True)
-            admin_wallet = EWallet.objects.get(owner=admin)
+            admin_wallet = EWallet.objects.get(user=admin)
         except (User.DoesNotExist, EWallet.DoesNotExist):
             raise ValidationError("Admin eWallet not found")
             
         # Check if student's wallet has sufficient balance
-        if student_wallet.balance < amount:
+        if student_wallet.current_balance < amount:
             raise ValidationError("Insufficient wallet balance")
             
         # Process payment
-        student_wallet.balance -= amount
-        admin_wallet.balance += amount
+        student_wallet.current_balance -= amount
+        admin_wallet.current_balance += amount
         student_wallet.save()
         admin_wallet.save()
         
@@ -546,17 +547,17 @@ class Enrollment(models.Model):
             
             try:
                 # Get wallets
-                student_wallet = EWallet.objects.get(owner=self.student)
+                student_wallet = EWallet.objects.get(user=self.student)
                 admin = User.objects.get(is_staff=True)
-                admin_wallet = EWallet.objects.get(owner=admin)
+                admin_wallet = EWallet.objects.get(user=admin)
                 
                 # Check if admin has sufficient balance for refund
-                if admin_wallet.balance < self.amount_paid:
+                if admin_wallet.current_balance < self.amount_paid:
                     raise ValidationError("Insufficient admin wallet balance for refund")
                 
                 # Process refund
-                student_wallet.balance += self.amount_paid
-                admin_wallet.balance -= self.amount_paid
+                student_wallet.current_balance += self.amount_paid
+                admin_wallet.current_balance -= self.amount_paid
                 student_wallet.save()
                 admin_wallet.save()
                 

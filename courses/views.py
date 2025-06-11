@@ -2,6 +2,7 @@ from rest_framework import viewsets, permissions, filters, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework import serializers
+from django.core.exceptions import ValidationError
 from .models import Department, CourseType, Course, Hall, ScheduleSlot, Booking,Wishlist, Enrollment
 from .serializers import (
     DepartmentSerializer, CourseTypeSerializer, CourseSerializer,
@@ -432,14 +433,21 @@ class EnrollmentViewSet(viewsets.ModelViewSet):
     
     def perform_create(self, serializer):
         """Create enrollment and process initial payment"""
-        enrollment = serializer.save(student=self.request.user)
-        
-        # Process initial payment (e.g., 20% of course price)
-        initial_payment = enrollment.course.price * Decimal('0.2')
         try:
-            enrollment.process_payment(initial_payment)
+            enrollment = serializer.save(student=self.request.user)
+            
+            # Process initial payment (30% of course price)
+            initial_payment = (enrollment.course.price * Decimal('0.3')).quantize(Decimal('0.00'))
+            try:
+                enrollment.process_payment(initial_payment)
+            except ValidationError as e:
+                enrollment.delete()  # Rollback enrollment if payment fails
+                raise serializers.ValidationError(str(e))
         except ValidationError as e:
-            enrollment.delete()  # Rollback enrollment if payment fails
+            if 'unique' in str(e):
+                raise serializers.ValidationError(
+                    "You are already enrolled in this course. Please check your enrollments."
+                )
             raise serializers.ValidationError(str(e))
     
     @action(detail=True, methods=['post'])
@@ -455,13 +463,13 @@ class EnrollmentViewSet(viewsets.ModelViewSet):
             )
         
         try:
-            amount = Decimal(amount)
-        except (TypeError, ValueError):
+            # Ensure amount has exactly 2 decimal places
+            amount = Decimal(amount).quantize(Decimal('0.00'))
+        except (TypeError, ValueError, InvalidOperation):
             return Response(
-                {'error': 'Invalid amount'},
+                {'error': 'Invalid amount format'},
                 status=status.HTTP_400_BAD_REQUEST
             )
-        
         # Calculate remaining balance
         remaining_balance = enrollment.course.price - enrollment.amount_paid
         
