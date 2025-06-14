@@ -1,6 +1,7 @@
 from rest_framework import viewsets, permissions, filters, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
+from rest_framework import serializers
 from rest_framework_simplejwt.views import TokenObtainPairView
 from rest_framework.parsers import MultiPartParser, FormParser
 from drf_spectacular.utils import extend_schema,OpenApiExample, OpenApiResponse
@@ -226,7 +227,7 @@ class TransactionViewSet(viewsets.ReadOnlyModelViewSet):
             Q(sender=user) | Q(receiver=user)
         ).select_related('sender', 'receiver')
 
-class EWalletViewSet(viewsets.ModelViewSet):
+class EWalletViewSet(viewsets.ReadOnlyModelViewSet):
     serializer_class = EWalletSerializer
     permission_classes = [permissions.IsAuthenticated]
     
@@ -235,9 +236,6 @@ class EWalletViewSet(viewsets.ModelViewSet):
         if user.is_staff or user.user_type in ['admin', 'reception']:
             return EWallet.objects.all().select_related('user')
         return EWallet.objects.filter(user=user).select_related('user')
-    
-    def perform_create(self, serializer):
-        serializer.save(owner=self.request.user)
     
     @action(detail=True, methods=['post'])
     def withdraw(self, request, pk=None):
@@ -254,7 +252,7 @@ class EWalletViewSet(viewsets.ModelViewSet):
             amount = Decimal(amount)
         except (TypeError, ValueError):
             return Response(
-                {'error': 'Invalid amount'},
+                {'error': 'Invalid amount format'},
                 status=status.HTTP_400_BAD_REQUEST
             )
         
@@ -277,7 +275,7 @@ class EWalletViewSet(viewsets.ModelViewSet):
             
             # Create transaction record
             Transaction.objects.create(
-                sender=wallet.owner,
+                sender=wallet.user,
                 receiver=None,  # External withdrawal
                 amount=amount,
                 transaction_type='withdrawal',
@@ -291,9 +289,9 @@ class EWalletViewSet(viewsets.ModelViewSet):
                 'new_balance': wallet.balance
             })
             
-        except ValidationError as e:
+        except Exception as e:
             return Response(
-                {'error': str(e)},
+                {'error': 'Failed to process withdrawal. Please try again.'},
                 status=status.HTTP_400_BAD_REQUEST
             )
 
