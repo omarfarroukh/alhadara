@@ -359,17 +359,14 @@ class BookingViewSet(viewsets.ModelViewSet):
         
         return Response({'status': 'booking cancelled'}, status=status.HTTP_200_OK)
 
-class WishlistViewSet(viewsets.ModelViewSet):
+class WishlistViewSet(viewsets.ReadOnlyModelViewSet):
     serializer_class = WishlistSerializer
     permission_classes = [permissions.IsAuthenticated]
-    http_method_names = ['get', 'post', 'patch', 'delete']
 
     def get_queryset(self):
+        # Get or create wishlist for the current user
+        wishlist, created = Wishlist.objects.get_or_create(owner=self.request.user)
         return Wishlist.objects.filter(owner=self.request.user).prefetch_related('courses')
-
-    def perform_create(self, serializer):
-        # Ensure each user only has one wishlist
-        serializer.save(owner=self.request.user)
 
     @action(detail=False, methods=['post'], url_path='toggle/(?P<course_id>[0-9]+)')
     def toggle_course(self, request, course_id=None):

@@ -219,10 +219,13 @@ class BookingSerializer(serializers.ModelSerializer):
 
 class WishlistCourseSerializer(serializers.ModelSerializer):
     course_type_name = serializers.ReadOnlyField(source='course_type.name')
+    department_name = serializers.ReadOnlyField(source='department.name')
+    
     class Meta:
         model = Course
         fields = (
-            'title','course_type_name'
+            'id', 'title', 'description', 'price', 'duration',
+            'course_type_name', 'department_name', 'category'
         )
 
 class EnrollmentSerializer(serializers.ModelSerializer):
@@ -279,9 +282,18 @@ class EnrollmentSerializer(serializers.ModelSerializer):
         return data
 
 class WishlistSerializer(serializers.ModelSerializer):
-    courses = WishlistCourseSerializer(many=True,read_only=True)
+    courses = serializers.SerializerMethodField()
+    workshops = serializers.SerializerMethodField()
     
     class Meta:
         model = Wishlist
-        fields = ['id', 'owner', 'courses', 'created_at']
-        read_only_fields = ['owner', 'created_at']
+        fields = ['id', 'courses', 'workshops', 'created_at']
+        read_only_fields = ['id', 'created_at']
+    
+    def get_courses(self, obj):
+        courses = obj.courses.filter(category='course')
+        return WishlistCourseSerializer(courses, many=True).data
+    
+    def get_workshops(self, obj):
+        workshops = obj.courses.filter(category='workshop')
+        return WishlistCourseSerializer(workshops, many=True).data
