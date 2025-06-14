@@ -232,9 +232,9 @@ class EWalletViewSet(viewsets.ModelViewSet):
     
     def get_queryset(self):
         user = self.request.user
-        if user.is_staff or user.user_type == 'reception':
-            return EWallet.objects.all().select_related('owner')
-        return EWallet.objects.filter(owner=user).select_related('owner')
+        if user.is_staff or user.user_type in ['admin', 'reception']:
+            return EWallet.objects.all().select_related('user')
+        return EWallet.objects.filter(user=user).select_related('user')
     
     def perform_create(self, serializer):
         serializer.save(owner=self.request.user)
