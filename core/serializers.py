@@ -31,26 +31,27 @@ class CustomUserCreateSerializer(serializers.ModelSerializer):
             'first_name': {'required': True},
             'middle_name': {'required': True},
             'last_name': {'required': True},
+            'user_type': {'read_only': False}  # Ensure it can be written during creation
         }
 
+    def validate_user_type(self, value):
+        """Validate that user_type is one of the allowed choices"""
+        if value not in dict(User.USER_TYPE_CHOICES).keys():
+            raise serializers.ValidationError("Invalid user type")
+        return value
+
     def validate_password(self, value):
-        """
-        Validate password meets strong requirements
-        """
+        """Validate password meets strong requirements"""
         return validate_password_strength(value)
     
     def validate(self, data):
-        """
-        Check that passwords match
-        """
+        """Check that passwords match"""
         if data['password'] != data['confirm_password']:
             raise serializers.ValidationError({"confirm_password": "Passwords do not match"})
         return data
 
     def create(self, validated_data):
-        """
-        Create user with validated data
-        """
+        """Create user with validated data"""
         validated_data.pop('confirm_password')
         user = User.objects.create_user(
             phone=validated_data['phone'],
@@ -58,7 +59,7 @@ class CustomUserCreateSerializer(serializers.ModelSerializer):
             first_name=validated_data['first_name'],
             middle_name=validated_data['middle_name'],
             last_name=validated_data['last_name'],
-            user_type=validated_data.get('user_type', 'student')  # default to 'regular' if not specified
+            user_type=validated_data['user_type']  # Now required (no default)
         )
         return user
 
@@ -69,11 +70,19 @@ class CustomUserCreateSerializer(serializers.ModelSerializer):
     def get_refresh(self, obj):
         refresh = RefreshToken.for_user(obj)
         return str(refresh)
+
+    def to_representation(self, instance):
+        """Ensure consistent output format with user_type"""
+        data = super().to_representation(instance)
+        # Explicitly include user_type in the response
+        data['user_type'] = instance.user_type
+        return data
     
 class CustomUserSerializer(UserSerializer):
     class Meta(UserSerializer.Meta):
         model = User
-        fields = ('id', 'phone', 'first_name', 'middle_name', 'last_name', 'user_type', 'is_active', 'last_login')
+        fields = ('id', 'phone', 'first_name', 'middle_name', 'last_name', 
+                 'user_type', 'is_active', 'last_login')
         extra_kwargs = {
             'phone': {
                 'error_messages': {
@@ -83,10 +92,22 @@ class CustomUserSerializer(UserSerializer):
         }
         
 class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
+    def validate(self, attrs):
+        """Add user_type to the token response"""
+        data = super().validate(attrs)
+        refresh = self.get_token(self.user)
+        
+        data.update({
+            'refresh': str(refresh),
+            'access': str(refresh.access_token),
+            'user_type': self.user.user_type  # Add user_type to response
+        })
+        return data
+
     @classmethod
     def get_token(cls, user):
+        """Add user_type to the token claims"""
         token = super().get_token(user)
-        # Add custom claims
         token['user_type'] = user.user_type
         return token
 class SecurityQuestionSerializer(serializers.ModelSerializer):
