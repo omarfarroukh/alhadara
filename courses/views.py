@@ -450,6 +450,24 @@ class EnrollmentViewSet(viewsets.ModelViewSet):
                 )
             raise serializers.ValidationError(str(e))
     
+    @extend_schema(
+        request={
+            'application/json': {
+                'type': 'object',
+                'properties': {
+                    'amount': {
+                        'type': 'number',
+                        'description': 'Payment amount'
+                    }
+                },
+                'required': ['amount']
+            }
+        },
+        responses={
+            200: EnrollmentSerializer,
+            400: OpenApiResponse(description='Bad request - invalid amount or insufficient balance')
+        }
+    )
     @action(detail=True, methods=['post'])
     def process_payment(self, request, pk=None):
         """Process additional payment from eWallet"""
@@ -498,6 +516,13 @@ class EnrollmentViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
     
+    @extend_schema(
+        request=None,  # No request body needed
+        responses={
+            200: EnrollmentSerializer,
+            400: OpenApiResponse(description='Bad request - enrollment cannot be cancelled')
+        }
+    )
     @action(detail=True, methods=['post'])
     def cancel(self, request, pk=None):
         """Cancel enrollment and process refund"""

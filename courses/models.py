@@ -424,17 +424,19 @@ class Enrollment(models.Model):
             ).exists():
                 raise ValidationError("Student is already enrolled in this course")
         
-        # Check course capacity
-        active_enrollments = self.course.enrollments.filter(
-            status__in=['pending', 'active']
-        ).count()
-        if active_enrollments >= self.course.max_students:
-            raise ValidationError("Course has reached maximum capacity")
-        
-        # Validate schedule slot if provided
+        # Check schedule slot capacity
         if self.schedule_slot:
             if self.schedule_slot.course != self.course:
                 raise ValidationError("Schedule slot does not belong to the selected course")
+            
+            # Count active enrollments for this schedule slot
+            active_enrollments = Enrollment.objects.filter(
+                schedule_slot=self.schedule_slot,
+                status__in=['pending', 'active']
+            ).exclude(pk=self.pk).count()
+            
+            if active_enrollments >= self.course.max_students:
+                raise ValidationError("Schedule slot has reached maximum capacity")
             
             # Check if student has any schedule conflicts
             student_enrollments = Enrollment.objects.filter(

@@ -238,7 +238,7 @@ class EnrollmentSerializer(serializers.ModelSerializer):
             'schedule_slot', 'schedule_slot_display', 'status', 'payment_status',
             'enrollment_date', 'amount_paid', 'remaining_balance', 'notes'
         )
-        read_only_fields = ('enrollment_date', 'status', 'payment_status', 'amount_paid')
+        read_only_fields = ('enrollment_date', 'status', 'payment_status', 'amount_paid', 'student')
     
     def get_schedule_slot_display(self, obj):
         if obj.schedule_slot:
@@ -259,6 +259,10 @@ class EnrollmentSerializer(serializers.ModelSerializer):
         # Update instance with validated data
         for key, value in data.items():
             setattr(instance, key, value)
+        
+        # Set student from request user
+        if not self.instance:  # Only on creation
+            instance.student = self.context['request'].user
         
         # Run model validation
         try:

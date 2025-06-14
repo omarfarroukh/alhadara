@@ -213,9 +213,10 @@ class Profile(models.Model):
             
             # Define allowed transitions
             allowed_transitions = {
-                "high_school": ["undergraduate", "not_studying"],
-                "undergraduate": ["graduate"],
-                "not_studying": ["high_school","undergraduate"],
+                "high_school": ["undergraduate", "not_studying","high_school"],
+                "undergraduate": ["graduate","undergraduate"],
+                "not_studying": ["high_school","undergraduate","not_studying"],
+                "graduate": ["graduate"],
             }
             
             if old_status in allowed_transitions and new_status not in allowed_transitions[old_status]:
