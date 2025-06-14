@@ -6,6 +6,7 @@ from decimal import Decimal
 from datetime import date
 from django.core.exceptions import ValidationError
 from django.contrib.auth import get_user_model
+import time
 
 User = get_user_model()
 class Department(models.Model):
@@ -437,35 +438,6 @@ class Enrollment(models.Model):
             
             if active_enrollments >= self.course.max_students:
                 raise ValidationError("Schedule slot has reached maximum capacity")
-            
-            # Check if student has any schedule conflicts
-            student_enrollments = Enrollment.objects.filter(
-                student=self.student,
-                status__in=['pending', 'active'],
-                schedule_slot__isnull=False
-            ).exclude(pk=self.pk)
-            
-            for enrollment in student_enrollments:
-                if self._has_schedule_conflict(enrollment.schedule_slot):
-                    raise ValidationError(
-                        f"Schedule conflict with course: {enrollment.course.title}"
-                    )
-    
-    def _has_schedule_conflict(self, other_slot):
-        """Check if there's a schedule conflict between two slots"""
-        if not self.schedule_slot or not other_slot:
-            return False
-            
-        # Check if days overlap
-        common_days = set(self.schedule_slot.days_of_week) & set(other_slot.days_of_week)
-        if not common_days:
-            return False
-            
-        # Check if times overlap
-        return (
-            self.schedule_slot.start_time < other_slot.end_time and
-            self.schedule_slot.end_time > other_slot.start_time
-        )
     
     def update_status(self):
         """Update status based on schedule slot dates"""
@@ -519,7 +491,8 @@ class Enrollment(models.Model):
         student_wallet.save()
         admin_wallet.save()
         
-        # Create transaction record
+        # Create transaction record with unique reference ID
+        timestamp = int(time.time())
         Transaction.objects.create(
             sender=self.student,
             receiver=admin,
@@ -527,7 +500,7 @@ class Enrollment(models.Model):
             transaction_type='course_payment',
             status='completed',
             description=f"Payment for course: {self.course.title}",
-            reference_id=f"ENR-{self.id}"
+            reference_id=f"ENR-{self.id}-{timestamp}"
         )
         
         # Update enrollment payment
