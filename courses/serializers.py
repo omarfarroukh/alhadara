@@ -65,7 +65,8 @@ class CourseSerializer(serializers.ModelSerializer):
         fields = (
             'id', 'title', 'description', 'price', 'duration', 
             'max_students', 'certification_eligible', 'department', 
-            'department_name', 'course_type', 'course_type_name', 'category'
+            'department_name', 'course_type', 'course_type_name', 'category',
+            'is_in_wishlist', 'wishlist_count'
         )
         
     def get_is_in_wishlist(self, obj):
