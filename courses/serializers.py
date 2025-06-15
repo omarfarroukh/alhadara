@@ -245,7 +245,9 @@ class EnrollmentSerializer(serializers.ModelSerializer):
     
     def get_schedule_slot_display(self, obj):
         if obj.schedule_slot:
-            return str(obj.schedule_slot)
+            # Custom format without teacher's name
+            days = ", ".join(obj.schedule_slot.days_of_week)
+            return f"{obj.schedule_slot.course.title} - {days} {obj.schedule_slot.start_time.strftime('%H:%M')}-{obj.schedule_slot.end_time.strftime('%H:%M')}"
         return None
     
     def get_remaining_balance(self, obj):
