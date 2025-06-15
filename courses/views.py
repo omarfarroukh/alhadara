@@ -159,22 +159,37 @@ class CourseViewSet(viewsets.ModelViewSet):
         return errors
     
     def get_queryset(self):
+        # Base queryset with select_related
         queryset = Course.objects.all().select_related(
             'course_type',
             'department'
         ).prefetch_related(
             'schedule_slots',
-            Prefetch(
-                'wishlists',
-                queryset=Wishlist.objects.select_related('owner')
-                                       .filter(owner=self.request.user)
-                                       .only('id', 'owner'),
-                to_attr='current_user_wishlists'
-            ),
-            'wishlists'
+            'wishlists'  # Always prefetch for count
         ).annotate(
             wishlist_count=Count('wishlists', distinct=True)
         )        
+         # Only add user-specific prefetch if authenticated
+        if self.request.user.is_authenticated:
+            queryset = queryset.prefetch_related(
+                Prefetch(
+                    'wishlists',
+                    queryset=Wishlist.objects.select_related('owner')
+                                        .filter(owner=self.request.user)
+                                        .only('id', 'owner'),
+                    to_attr='current_user_wishlists'
+                )
+            )
+        else:
+            # For anonymous users, set an empty list
+            queryset = queryset.prefetch_related(
+                Prefetch(
+                    'wishlists',
+                    queryset=Wishlist.objects.none(),
+                    to_attr='current_user_wishlists'
+                )
+            )
+        
         params = self.request.query_params
         
         if department_id := params.get('department'):
