@@ -57,6 +57,8 @@ class HallSerializer(serializers.ModelSerializer):
 class CourseSerializer(serializers.ModelSerializer):
     department_name = serializers.ReadOnlyField(source='department.name')
     course_type_name = serializers.ReadOnlyField(source='course_type.name')
+    is_in_wishlist = serializers.SerializerMethodField()
+    wishlist_count = serializers.SerializerMethodField(read_only=True)
     
     class Meta:
         model = Course
@@ -65,6 +67,17 @@ class CourseSerializer(serializers.ModelSerializer):
             'max_students', 'certification_eligible', 'department', 
             'department_name', 'course_type', 'course_type_name', 'category'
         )
+        
+    def get_is_in_wishlist(self, obj):
+        # Uses the prefetched current_user_wishlists
+        if hasattr(obj, 'current_user_wishlists'):
+            return len(obj.current_user_wishlists) > 0
+        return False
+    
+    def get_wishlist_count(self, obj):
+        # Count how many wishlists include this course
+        return obj.wishlists.count()
+    
     def validate(self, data):
         """
         Use Django model validation by creating a temporary instance
@@ -245,9 +258,13 @@ class EnrollmentSerializer(serializers.ModelSerializer):
     
     def get_schedule_slot_display(self, obj):
         if obj.schedule_slot:
-            # Custom format without teacher's name
             days = ", ".join(obj.schedule_slot.days_of_week)
-            return f"{obj.schedule_slot.course.title} - {days} {obj.schedule_slot.start_time.strftime('%H:%M')}-{obj.schedule_slot.end_time.strftime('%H:%M')}"
+            valid_from = obj.schedule_slot.valid_from.strftime('%Y-%m-%d') if obj.schedule_slot.valid_from else "N/A"
+            valid_until = obj.schedule_slot.valid_until.strftime('%Y-%m-%d') if obj.schedule_slot.valid_until else "N/A"
+            return (
+                f"{obj.schedule_slot.course.title} - {days} {obj.schedule_slot.start_time.strftime('%H:%M')}-"
+                f"{obj.schedule_slot.end_time.strftime('%H:%M')} (From {valid_from} to {valid_until})"
+            )
         return None
     
     def get_remaining_balance(self, obj):
@@ -293,9 +310,13 @@ class WishlistSerializer(serializers.ModelSerializer):
         read_only_fields = ['id', 'created_at']
     
     def get_courses(self, obj):
-        courses = obj.courses.filter(category='course')
+        courses = obj.courses.filter(category='course').select_related(
+            'course_type', 'department'
+        )
         return WishlistCourseSerializer(courses, many=True).data
     
     def get_workshops(self, obj):
-        workshops = obj.courses.filter(category='workshop')
+        workshops = obj.courses.filter(category='workshop').select_related(
+            'course_type', 'department'
+        )
         return WishlistCourseSerializer(workshops, many=True).data

@@ -8,7 +8,7 @@ from .serializers import (
     DepartmentSerializer, CourseTypeSerializer, CourseSerializer,
     HallSerializer, ScheduleSlotSerializer, BookingSerializer,WishlistSerializer, EnrollmentSerializer
 )
-from django.db.models import Q
+from django.db.models import Q, Count, Prefetch
 from core.permissions import IsOwnerOrAdminOrReception,IsStudent,IsTeacher,IsReception,IsAdmin
 from django_filters.rest_framework import DjangoFilterBackend
 from django.contrib.auth import get_user_model
@@ -159,7 +159,22 @@ class CourseViewSet(viewsets.ModelViewSet):
         return errors
     
     def get_queryset(self):
-        queryset = super().get_queryset()
+        queryset = Course.objects.all().select_related(
+            'course_type',
+            'department'
+        ).prefetch_related(
+            'schedule_slots',
+            Prefetch(
+                'wishlists',
+                queryset=Wishlist.objects.select_related('owner')
+                                       .filter(owner=self.request.user)
+                                       .only('id', 'owner'),
+                to_attr='current_user_wishlists'
+            ),
+            'wishlists'
+        ).annotate(
+            wishlist_count=Count('wishlists', distinct=True)
+        )        
         params = self.request.query_params
         
         if department_id := params.get('department'):
@@ -365,22 +380,38 @@ class WishlistViewSet(viewsets.ReadOnlyModelViewSet):
 
     def get_queryset(self):
         # Get or create wishlist for the current user
-        wishlist, created = Wishlist.objects.get_or_create(owner=self.request.user)
-        return Wishlist.objects.filter(owner=self.request.user).prefetch_related('courses')
+        wishlist, created = Wishlist.objects.get_or_create(
+            owner=self.request.user
+        )
+        return Wishlist.objects.filter(
+            owner=self.request.user
+        ).prefetch_related(
+            Prefetch(
+                'courses',
+                queryset=Course.objects.select_related(
+                    'course_type', 'department'
+                )
+            )
+        )
 
     @action(detail=False, methods=['post'], url_path='toggle/(?P<course_id>[0-9]+)')
     def toggle_course(self, request, course_id=None):
-        """
-        Toggle course in user's wishlist
-        URL: /api/wishlists/toggle/<course_id>/
-        """
         try:
-            # Get or create wishlist for current user
-            wishlist, created = Wishlist.objects.get_or_create(owner=request.user)
-            course = get_object_or_404(Course, pk=course_id)
+            wishlist, created = Wishlist.objects.get_or_create(
+                owner=request.user
+            )
+            course = get_object_or_404(
+                Course.objects.prefetch_related(
+                    Prefetch(
+                        'wishlists',
+                        queryset=Wishlist.objects.filter(owner=request.user),
+                        to_attr='user_wishlists'
+                    )
+                ),
+                pk=course_id
+            )
             
-            # Check if course exists in wishlist
-            if wishlist.courses.filter(pk=course.id).exists():
+            if course in wishlist.courses.all():
                 wishlist.courses.remove(course)
                 return Response({
                     "status": "removed",
