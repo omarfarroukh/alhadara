@@ -171,7 +171,7 @@ if DEVELOPMENT:
     DATABASES = {
         'default': {
             'ENGINE': 'django.db.backends.postgresql',
-            'NAME': os.environ.get('LOCAL_DB_NAME', 'alhadara'),
+            'NAME': os.environ.get('LOCAL_DB_NAME', 'hadara2'),
             'USER': os.environ.get('LOCAL_DB_USER', 'postgres'),
             'PASSWORD': os.environ.get('LOCAL_DB_PASSWORD', 'yasser'),
             'HOST': os.environ.get('LOCAL_DB_HOST', 'localhost'),

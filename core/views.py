@@ -15,11 +15,11 @@ from django_ratelimit.decorators import ratelimit
 from django_filters.rest_framework import DjangoFilterBackend
 from .models import (ProfileImage, SecurityQuestion, SecurityAnswer, Interest, 
     Profile, ProfileInterest, EWallet, DepositMethod,
-    BankTransferInfo, MoneyTransferInfo, DepositRequest, StudyField, University, Transaction
+    BankTransferInfo, MoneyTransferInfo, DepositRequest, StudyField, University, Transaction, Notification
 )
 from .serializers import (
     NewPasswordSerializer, PasswordResetRequestSerializer, ProfileImageSerializer, SecurityAnswerValidationSerializer, SecurityQuestionSerializer, SecurityAnswerSerializer, InterestSerializer, 
-    ProfileSerializer, EWalletSerializer, DepositMethodSerializer, DepositRequestSerializer, AddInterestSerializer,RemoveInterestSerializer, StudyFieldSerializer, UniversitySerializer, TransactionSerializer
+    ProfileSerializer, EWalletSerializer, DepositMethodSerializer, DepositRequestSerializer, AddInterestSerializer,RemoveInterestSerializer, StudyFieldSerializer, UniversitySerializer, TransactionSerializer, NotificationSerializer
 )
 from rest_framework.permissions import AllowAny
 from .permissions import IsStudent,IsReception, IsAdminOrReception, IsOwnerOrAdminOrReception
@@ -33,6 +33,7 @@ import logging
 from django.db.models import Q
 from decimal import Decimal
 import time
+from .services import notify_deposit_request_created, notify_deposit_status_changed
 
 logger = logging.getLogger(__name__)
 User = get_user_model()
@@ -234,8 +235,22 @@ class EWalletViewSet(viewsets.ReadOnlyModelViewSet):
     def get_queryset(self):
         user = self.request.user
         if user.is_staff or user.user_type in ['admin', 'reception']:
-            return EWallet.objects.all().select_related('user')
+            return EWallet.objects.filter(user__user_type='student').select_related('user')
         return EWallet.objects.filter(user=user).select_related('user')
+    
+    @action(detail=False, methods=['get'], permission_classes=[IsAdminOrReception])
+    def admin_wallet(self, request):
+        """Get admin wallet details - only accessible by admin and reception"""
+        try:
+            admin_user = User.objects.get(user_type='admin')
+            admin_wallet = EWallet.objects.get(user=admin_user)
+            serializer = self.get_serializer(admin_wallet)
+            return Response(serializer.data)
+        except (User.DoesNotExist, EWallet.DoesNotExist):
+            return Response(
+                {'error': 'Admin wallet not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
     
     @action(detail=True, methods=['post'])
     def withdraw(self, request, pk=None):
@@ -299,7 +314,29 @@ class DepositMethodViewSet(viewsets.ReadOnlyModelViewSet):
     queryset = DepositMethod.objects.filter(is_active=True)
     serializer_class = DepositMethodSerializer
     permission_classes = [permissions.IsAuthenticated]
+
+class NotificationViewSet(viewsets.ReadOnlyModelViewSet):
+    serializer_class = NotificationSerializer
+    permission_classes = [permissions.IsAuthenticated]
+    filter_backends = [filters.OrderingFilter]
+    ordering_fields = ['created_at', 'is_read']
+    ordering = ['-created_at']
     
+    def get_queryset(self):
+        return Notification.objects.filter(recipient=self.request.user)
+    
+    @action(detail=True, methods=['post'])
+    def mark_read(self, request, pk=None):
+        notification = self.get_object()
+        notification.is_read = True
+        notification.save()
+        return Response({'status': 'marked as read'})
+    
+    @action(detail=False, methods=['post'])
+    def mark_all_read(self, request):
+        self.get_queryset().update(is_read=True)
+        return Response({'status': 'all marked as read'})
+
 class DepositRequestViewSet(viewsets.ModelViewSet):
     parser_classes = (MultiPartParser, FormParser)
     serializer_class = DepositRequestSerializer
@@ -374,6 +411,9 @@ class DepositRequestViewSet(viewsets.ModelViewSet):
                 reference_id=f"DEP-{deposit_request.id}"
             )
             
+            # Send notification to reception and admin
+            notify_deposit_request_created(deposit_request)
+            
             serializer = self.get_serializer(deposit_request)
             return Response(serializer.data, status=status.HTTP_201_CREATED)
         except Exception as e:
@@ -385,6 +425,8 @@ class DepositRequestViewSet(viewsets.ModelViewSet):
         deposit_request = self.get_object()
         try:
             deposit_request.approve()
+            # Send notification to user
+            notify_deposit_status_changed(deposit_request, 'verified')
             return Response({'status': 'deposit approved'})
         except ValidationError as e:
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
@@ -395,6 +437,8 @@ class DepositRequestViewSet(viewsets.ModelViewSet):
         deposit_request = self.get_object()
         try:
             deposit_request.reject()
+            # Send notification to user
+            notify_deposit_status_changed(deposit_request, 'rejected')
             return Response({'status': 'deposit rejected'})
         except ValidationError as e:
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)

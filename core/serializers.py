@@ -5,7 +5,7 @@ from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from djoser.serializers import UserCreateSerializer as BaseUserCreateSerializer, UserSerializer
 from .models import ( ProfileImage, SecurityQuestion, SecurityAnswer, Interest, 
     Profile, ProfileInterest, EWallet, DepositMethod,
-    BankTransferInfo, MoneyTransferInfo, DepositRequest, StudyField, University, Transaction
+    BankTransferInfo, MoneyTransferInfo, DepositRequest, StudyField, University, Transaction, Notification
 )
 from django.core.exceptions import ValidationError as DjangoValidationError
 from rest_framework.exceptions import ValidationError as DRFValidationError
@@ -330,11 +330,12 @@ class ProfileSerializer(serializers.ModelSerializer):
         return instance
 
 class EWalletSerializer(serializers.ModelSerializer):
-    user_username = serializers.ReadOnlyField(source='user.username')
+    user_full_name = serializers.ReadOnlyField(source='user.get_full_name')
+    user_phone = serializers.ReadOnlyField(source='user.phone')
     
     class Meta:
         model = EWallet
-        fields = ('id', 'user', 'user_username', 'current_balance', 'last_updated')
+        fields = ('id', 'user', 'user_full_name', 'user_phone', 'current_balance', 'last_updated')
         read_only_fields = ('user', 'current_balance', 'last_updated')
 
 class BankTransferInfoSerializer(serializers.ModelSerializer):
@@ -431,3 +432,9 @@ class TransactionSerializer(serializers.ModelSerializer):
         if obj.receiver:
             return obj.receiver.get_full_name()
         return None
+
+class NotificationSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Notification
+        fields = ('id', 'notification_type', 'title', 'message', 'data', 'is_read', 'created_at')
+        read_only_fields = ('id', 'created_at')

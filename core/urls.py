@@ -4,7 +4,7 @@ from rest_framework_simplejwt.views import TokenRefreshView, TokenVerifyView
 from .views import (
     PasswordResetViewSet, ProfileImageViewSet, SecurityQuestionViewSet, SecurityAnswerViewSet, InterestViewSet,UserProfileView,
     ProfileViewSet, EWalletViewSet, DepositMethodViewSet, DepositRequestViewSet, CustomTokenObtainPairView, StudyFieldViewSet, UniversityViewSet,
-    TransactionViewSet
+    TransactionViewSet, NotificationViewSet
 )
 
 router = DefaultRouter()
@@ -20,6 +20,7 @@ router.register(r'reset-password', PasswordResetViewSet, basename='password-rese
 router.register(r'universities', UniversityViewSet)
 router.register(r'studyfields', StudyFieldViewSet)
 router.register(r'transactions', TransactionViewSet, basename='transaction')
+router.register(r'notifications', NotificationViewSet, basename='notification')
 
 urlpatterns = [
     # JWT Authentication endpoints
