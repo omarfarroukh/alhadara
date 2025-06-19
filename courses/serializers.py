@@ -262,7 +262,7 @@ class BaseEnrollmentSerializer(serializers.ModelSerializer):
             'id', 'enrollment_date', 'status', 'payment_status', 
             'amount_paid', 'student_name', 'course_title',
             'schedule_slot_display', 'remaining_balance', 'payment_method_display',
-            'enrolled_by'
+            'enrolled_by', 'student'
         )
 
     def get_student_name(self, obj):
