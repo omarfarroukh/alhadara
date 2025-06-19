@@ -1,4 +1,6 @@
-# your_project/celery.py
+from eventlet import monkey_patch
+monkey_patch()
+
 import os
 from celery import Celery
 

@@ -379,6 +379,16 @@ class DepositRequest(models.Model):
         
         if self.amount <= 0:
             raise ValidationError("Deposit amount must be positive")
+        
+        """Modified validation to allow cash transactions"""
+        if self.transaction_type == 'course_payment':
+            if not self.receiver:
+                raise ValidationError("Receiver is required for payments")
+            # Only require sender for eWallet payments
+            if not self.sender and not getattr(self, 'metadata', {}).get('is_cash'):
+                raise ValidationError(
+                    "Both sender and receiver are required for this transaction type"
+                )
 
 @receiver(post_save, sender=DepositRequest)
 def update_transaction_status(sender, instance, **kwargs):

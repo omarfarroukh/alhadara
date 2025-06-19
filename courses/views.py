@@ -5,8 +5,8 @@ from rest_framework import serializers
 from django.core.exceptions import ValidationError
 from .models import Department, CourseType, Course, Hall, ScheduleSlot, Booking,Wishlist, Enrollment
 from .serializers import (
-    DepartmentSerializer, CourseTypeSerializer, CourseSerializer,
-    HallSerializer, ScheduleSlotSerializer, BookingSerializer,WishlistSerializer, EnrollmentSerializer
+    BaseEnrollmentSerializer, DepartmentSerializer, CourseTypeSerializer, CourseSerializer, GuestEnrollmentSerializer,
+    HallSerializer, ScheduleSlotSerializer, BookingSerializer, StudentEnrollmentSerializer,WishlistSerializer,
 )
 from django.db.models import Q, Count, Prefetch
 from core.permissions import IsOwnerOrAdminOrReception,IsStudent,IsTeacher,IsReception,IsAdmin
@@ -16,7 +16,7 @@ from rest_framework.generics import get_object_or_404
 from drf_yasg.utils import swagger_auto_schema
 from drf_yasg import openapi
 import time
-from decimal import Decimal 
+from decimal import Decimal, InvalidOperation
 from drf_spectacular.utils import extend_schema, OpenApiParameter,OpenApiResponse
 from drf_spectacular.types import OpenApiTypes
 User = get_user_model()
@@ -449,50 +449,78 @@ class WishlistViewSet(viewsets.ReadOnlyModelViewSet):
         
 
 class EnrollmentViewSet(viewsets.ModelViewSet):
-    serializer_class = EnrollmentSerializer
     permission_classes = [permissions.IsAuthenticated]
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
-    filterset_fields = ['status', 'payment_status', 'course']
-    search_fields = ['course__title', 'student__first_name', 'student__last_name']
+    filterset_fields = ['status', 'payment_status', 'course', 'is_guest', 'payment_method']
+    search_fields = [
+        'course__title', 
+        'student__first_name', 'student__last_name',
+        'first_name', 'last_name',
+        'phone'
+    ]
     ordering_fields = ['enrollment_date', 'status']
     ordering = ['-enrollment_date']
     
+    def get_serializer_class(self):
+        if self.action == 'create_guest':
+            return GuestEnrollmentSerializer
+        return StudentEnrollmentSerializer
+    
     def get_permissions(self):
+        if self.action == 'create_guest':
+            return [IsReception()]
         if self.action in ['create', 'update', 'partial_update', 'destroy']:
             return [IsStudent()]
+        if self.action in ['record_cash_payment']:
+            return [IsReception()]
         return [permissions.IsAuthenticated()]
     
     def get_queryset(self):
         user = self.request.user
+        queryset = Enrollment.objects.all().select_related(
+            'student', 'course', 'schedule_slot'
+        )
+        
         if user.is_staff or user.user_type == 'reception':
-            return Enrollment.objects.all().select_related(
-                'student', 'course', 'schedule_slot'
-            )
+            return queryset
         elif user.user_type == 'student':
-            return Enrollment.objects.filter(
-                student=user
-            ).select_related('course', 'schedule_slot')
+            return queryset.filter(Q(student=user) | Q(enrolled_by=user))
         return Enrollment.objects.none()
     
+    
+
     def perform_create(self, serializer):
         """Create enrollment and process initial payment"""
         try:
-            enrollment = serializer.save(student=self.request.user)
+            # For regular student enrollments, auto-fill user info
+            if not serializer.validated_data.get('is_guest', False):
+                user = self.request.user
+                serializer.validated_data.update({
+                    'student': user,
+                    'first_name': user.first_name,
+                    'middle_name': user.middle_name,
+                    'last_name': user.last_name,
+                    'phone': user.phone,
+                    'payment_method': 'ewallet'
+                })
+            
+            enrollment = serializer.save()
             
             # Process initial payment (30% of course price)
             initial_payment = (enrollment.course.price * Decimal('0.3')).quantize(Decimal('0.00'))
             try:
                 enrollment.process_payment(initial_payment)
             except ValidationError as e:
-                enrollment.delete()  # Rollback enrollment if payment fails
+                enrollment.delete()
                 raise serializers.ValidationError(str(e))
+                
         except ValidationError as e:
             if 'unique' in str(e):
                 raise serializers.ValidationError(
                     "You are already enrolled in this course. Please check your enrollments."
                 )
             raise serializers.ValidationError(str(e))
-    
+
     @extend_schema(
         request={
             'application/json': {
@@ -507,7 +535,7 @@ class EnrollmentViewSet(viewsets.ModelViewSet):
             }
         },
         responses={
-            200: EnrollmentSerializer,
+            200: BaseEnrollmentSerializer,
             400: OpenApiResponse(description='Bad request - invalid amount or insufficient balance')
         }
     )
@@ -524,17 +552,15 @@ class EnrollmentViewSet(viewsets.ModelViewSet):
             )
         
         try:
-            # Ensure amount has exactly 2 decimal places
             amount = Decimal(amount).quantize(Decimal('0.00'))
         except (TypeError, ValueError, InvalidOperation):
             return Response(
                 {'error': 'Invalid amount format'},
                 status=status.HTTP_400_BAD_REQUEST
             )
-        # Calculate remaining balance
+            
         remaining_balance = enrollment.course.price - enrollment.amount_paid
         
-        # Validate payment amount
         if amount <= 0:
             return Response(
                 {'error': 'Payment amount must be positive'},
@@ -551,7 +577,7 @@ class EnrollmentViewSet(viewsets.ModelViewSet):
             )
         
         try:
-            enrollment.process_payment(amount)
+            enrollment.process_payment(amount, payment_method='ewallet')
             return Response(self.get_serializer(enrollment).data)
         except ValidationError as e:
             return Response(
@@ -560,9 +586,62 @@ class EnrollmentViewSet(viewsets.ModelViewSet):
             )
     
     @extend_schema(
-        request=None,  # No request body needed
+        request={
+            'application/json': {
+                'type': 'object',
+                'properties': {
+                    'amount': {
+                        'type': 'number',
+                        'description': 'Cash payment amount'
+                    }
+                },
+                'required': ['amount']
+            }
+        },
         responses={
-            200: EnrollmentSerializer,
+            200: BaseEnrollmentSerializer,
+            400: OpenApiResponse(description='Bad request - invalid amount')
+        }
+    )
+    @action(detail=True, methods=['post'], permission_classes=[IsReception])
+    def record_cash_payment(self, request, pk=None):
+        """Record cash payment for an enrollment"""
+        enrollment = self.get_object()
+        amount = request.data.get('amount')
+        
+        if not amount:
+            return Response(
+                {'error': 'Amount is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            amount = Decimal(amount).quantize(Decimal('0.00'))
+        except (TypeError, ValueError, InvalidOperation):
+            return Response(
+                {'error': 'Invalid amount format'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        if amount <= 0:
+            return Response(
+                {'error': 'Payment amount must be positive'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            enrollment.process_payment(amount, payment_method='cash')
+            return Response(self.get_serializer(enrollment).data)
+        except ValidationError as e:
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+    
+    @extend_schema(
+        request=None,
+        responses={
+            200: BaseEnrollmentSerializer,
             400: OpenApiResponse(description='Bad request - enrollment cannot be cancelled')
         }
     )
@@ -579,7 +658,52 @@ class EnrollmentViewSet(viewsets.ModelViewSet):
                 {'error': str(e)},
                 status=status.HTTP_400_BAD_REQUEST
             )
-
+            
+    @action(detail=False, methods=['post'], permission_classes=[IsReception])
+    def create_guest(self, request):
+        """Endpoint for guest enrollments"""
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        
+        # Get cleaned data (with duplicates removed by serializer)
+        validated_data = serializer.validated_data
+        
+        # Process cash payment if provided
+        cash_amount = validated_data.pop('cash_amount', None)
+        payment_method = 'cash' if cash_amount else None
+        
+        try:
+            # Create enrollment with single payment_method assignment
+            enrollment = Enrollment.objects.create(
+                **validated_data,
+                is_guest=True,
+                payment_method=payment_method,  # Set exactly once here
+                enrolled_by=request.user
+            )
+            
+            # Process payment if amount provided
+            if cash_amount:
+                try:
+                    amount = Decimal(str(cash_amount)).quantize(Decimal('0.00'))
+                    enrollment.process_payment(amount, payment_method='cash')
+                except (ValidationError, InvalidOperation) as e:
+                    enrollment.delete()
+                    return Response(
+                        {'error': f"Payment processing failed: {str(e)}"},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+                    
+        except Exception as e:
+            return Response(
+                {'error': f"Enrollment creation failed: {str(e)}"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        return Response(
+            BaseEnrollmentSerializer(enrollment).data,
+            status=status.HTTP_201_CREATED
+        )
+        
 class UnifiedSearchViewSet(viewsets.ViewSet):
     """
     A unified search viewset that searches across departments, course types, and courses.

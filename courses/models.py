@@ -7,6 +7,7 @@ from datetime import date
 from django.core.exceptions import ValidationError
 from django.contrib.auth import get_user_model
 import time
+from core.validators import syrian_phone_validator
 
 User = get_user_model()
 class Department(models.Model):
@@ -369,12 +370,41 @@ class Enrollment(models.Model):
         ('paid', 'Paid'),
         ('refunded', 'Refunded')
     )
+    PAYMENT_METHOD_CHOICES = (
+        ('ewallet', 'eWallet'),
+        ('cash', 'Cash'),
+    )
     
+    payment_method = models.CharField(
+        max_length=10,
+        choices=PAYMENT_METHOD_CHOICES,
+        null=True,
+        blank=True
+    )
     student = models.ForeignKey(
         User,
         on_delete=models.CASCADE,
-        related_name='enrollments',
-        limit_choices_to={'user_type': 'student'}
+        null=True,
+        blank=True,
+        related_name='enrollments'
+    )
+    # Add these new fields
+    first_name = models.CharField(max_length=150, blank=True)
+    middle_name = models.CharField(max_length=150, blank=True)
+    last_name = models.CharField(max_length=150, blank=True)
+    phone = models.CharField(
+        max_length=20,
+        blank=True,
+        validators=[syrian_phone_validator]
+    )
+    is_guest = models.BooleanField(default=False)
+    enrolled_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='created_enrollments',
+        limit_choices_to={'user_type': 'reception'}
     )
     course = models.ForeignKey(
         Course,
@@ -406,7 +436,6 @@ class Enrollment(models.Model):
     notes = models.TextField(blank=True, null=True)
     
     class Meta:
-        unique_together = ('student', 'course')
         ordering = ['-enrollment_date']
         
     def __str__(self):
@@ -457,9 +486,9 @@ class Enrollment(models.Model):
             elif self.schedule_slot.valid_until and today > self.schedule_slot.valid_until:
                 self.status = 'completed'
     
-    def process_payment(self, amount):
-        """Process payment from student's eWallet to admin's eWallet"""
-        from core.models import EWallet, Transaction  # Import here to avoid circular import
+    def process_payment(self, amount, payment_method='ewallet'):
+        """Process payment with support for both eWallet and cash"""
+        from core.models import EWallet, Transaction
         
         amount = amount.quantize(Decimal('0.00'))
         if amount <= 0:
@@ -467,89 +496,148 @@ class Enrollment(models.Model):
             
         if amount > self.course.price - self.amount_paid:
             raise ValidationError("Payment amount exceeds remaining balance")
-            
-        # Get student's eWallet
-        try:
-            student_wallet = EWallet.objects.get(user=self.student)
-        except EWallet.DoesNotExist:
-            raise ValidationError("Student does not have an eWallet")
-            
-        # Get admin's eWallet
-        try:
-            admin = User.objects.get(is_staff=True)
-            admin_wallet = EWallet.objects.get(user=admin)
-        except (User.DoesNotExist, EWallet.DoesNotExist):
-            raise ValidationError("Admin eWallet not found")
-            
-        # Check if student's wallet has sufficient balance
-        if student_wallet.current_balance < amount:
-            raise ValidationError("Insufficient wallet balance")
-            
-        # Process payment
-        student_wallet.current_balance -= amount
-        admin_wallet.current_balance += amount
-        student_wallet.save()
-        admin_wallet.save()
         
-        # Create transaction record with unique reference ID
-        timestamp = int(time.time())
-        Transaction.objects.create(
-            sender=self.student,
-            receiver=admin,
-            amount=amount,
-            transaction_type='course_payment',
-            status='completed',
-            description=f"Payment for course: {self.course.title}",
-            reference_id=f"ENR-{self.id}-{timestamp}"
-        )
+        # Set payment method automatically
+        self.payment_method = payment_method
         
-        # Update enrollment payment
+        if payment_method == 'ewallet':
+            if not self.student:
+                raise ValidationError("eWallet payments require a registered student")
+                
+            try:
+                student_wallet = EWallet.objects.get(user=self.student)
+                admin = User.objects.get(is_staff=True)
+                admin_wallet = EWallet.objects.get(user=admin)
+                
+                if student_wallet.current_balance < amount:
+                    raise ValidationError("Insufficient wallet balance")
+                    
+                student_wallet.current_balance -= amount
+                admin_wallet.current_balance += amount
+                student_wallet.save()
+                admin_wallet.save()
+                
+                Transaction.objects.create(
+                    sender=self.student,
+                    receiver=admin,
+                    amount=amount,
+                    transaction_type='course_payment',
+                    status='completed',
+                    description=f"eWallet payment for course: {self.course.title}",
+                    reference_id=f"ENR-{self.id}-{int(time.time())}"
+                )
+                
+            except (EWallet.DoesNotExist, User.DoesNotExist) as e:
+                raise ValidationError(f"Failed to process eWallet payment: {str(e)}")
+            except Exception as e:
+                raise ValidationError(f"Unexpected error during eWallet payment: {str(e)}")
+                
+        elif payment_method == 'cash':
+            try:
+                admin = User.objects.filter(is_staff=True).first()
+                if not admin:
+                    raise ValidationError("Admin account not found")
+                admin_wallet = EWallet.objects.get(user=admin)
+                admin_wallet.deposit(amount)
+
+                # Get or create a generic Guest user
+                guest_user, _ = User.objects.get_or_create(
+                    phone='guest',
+                    defaults={
+                        'first_name': 'Guest',
+                        'middle_name': 'Guest',
+                        'last_name': 'User',
+                        'user_type': 'student',
+                        'is_active': False
+                    }
+                )
+
+                Transaction.objects.create(
+                    sender=guest_user,
+                    receiver=admin,
+                    amount=amount,
+                    transaction_type='course_payment',
+                    status='completed',
+                    description=(
+                        f"Cash payment from {self.first_name} {self.last_name} "
+                        f"(Phone: {self.phone}) - Course: {self.course.title}"
+                    ),
+                    reference_id=f"CASH-{self.id}-{int(time.time())}",
+                )
+
+            except Exception as e:
+                raise ValidationError(f"Failed to process cash payment: {str(e)}")
+            
+        # Update enrollment status
         self.amount_paid += amount
-        if self.amount_paid >= self.course.price:
-            self.payment_status = 'paid'
-        else:
-            self.payment_status = 'partial'
+        self.payment_status = 'paid' if self.amount_paid >= self.course.price else 'partial'
         self.save()
-    
+
     def cancel(self):
-        """Cancel enrollment and process refund from admin's eWallet"""
+        """Cancel enrollment and process refund"""
         if self.status == 'cancelled':
             return
             
         # Process refund if payment was made
         if self.amount_paid > 0:
-            from core.models import EWallet, Transaction  # Import here to avoid circular import
+            from core.models import EWallet, Transaction
             
             try:
-                # Get wallets
-                student_wallet = EWallet.objects.get(user=self.student)
                 admin = User.objects.get(is_staff=True)
                 admin_wallet = EWallet.objects.get(user=admin)
                 
-                # Check if admin has sufficient balance for refund
-                if admin_wallet.current_balance < self.amount_paid:
-                    raise ValidationError("Insufficient admin wallet balance for refund")
-                
-                # Process refund
-                student_wallet.current_balance += self.amount_paid
-                admin_wallet.current_balance -= self.amount_paid
-                student_wallet.save()
-                admin_wallet.save()
-                
-                # Create refund transaction record
-                Transaction.objects.create(
-                    sender=admin,
-                    receiver=self.student,
-                    amount=self.amount_paid,
-                    transaction_type='course_refund',
-                    status='completed',
-                    description=f"Refund for cancelled course: {self.course.title}",
-                    reference_id=f"ENR-{self.id}-REF"
-                )
+                # For guest enrollments, we just deduct from admin wallet
+                if self.is_guest:
+                    # Use the generic Guest user as receiver
+                    guest_user, _ = User.objects.get_or_create(
+                        phone='guest',
+                        defaults={
+                            'first_name': 'Guest',
+                            'middle_name': 'Guest',
+                            'last_name': 'User',
+                            'user_type': 'student',
+                            'is_active': False
+                        }
+                    )
+                    admin_wallet.withdraw(self.amount_paid)
+                    
+                    Transaction.objects.create(
+                        sender=admin,
+                        receiver=guest_user,  # Use guest user as receiver
+                        amount=self.amount_paid,
+                        transaction_type='course_refund',
+                        status='completed',
+                        description=(
+                            f"Cash refund for {self.first_name} {self.last_name} "
+                            f"(Phone: {self.phone}) - Course: {self.course.title}"
+                        ),
+                        reference_id=f"REFUND-{self.id}-{int(time.time())}"
+                    )
+                else:
+                    # Regular student refund
+                    student_wallet = EWallet.objects.get(user=self.student)
+                    
+                    if admin_wallet.current_balance < self.amount_paid:
+                        raise ValidationError("Insufficient admin wallet balance for refund")
+                    
+                    student_wallet.current_balance += self.amount_paid
+                    admin_wallet.current_balance -= self.amount_paid
+                    student_wallet.save()
+                    admin_wallet.save()
+                    
+                    Transaction.objects.create(
+                        sender=admin,
+                        receiver=self.student,
+                        amount=self.amount_paid,
+                        transaction_type='course_refund',
+                        status='completed',
+                        description=f"Refund for cancelled course: {self.course.title}",
+                        reference_id=f"ENR-{self.id}-REF"
+                    )
                 
             except (EWallet.DoesNotExist, User.DoesNotExist):
                 raise ValidationError("Required wallets not found for refund")
-                
+            
         self.status = 'cancelled'
         self.payment_status = 'refunded'
         self.save()

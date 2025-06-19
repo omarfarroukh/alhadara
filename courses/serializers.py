@@ -242,64 +242,170 @@ class WishlistCourseSerializer(serializers.ModelSerializer):
             'course_type_name', 'department_name', 'category'
         )
 
-class EnrollmentSerializer(serializers.ModelSerializer):
-    student_name = serializers.ReadOnlyField(source='student.get_full_name')
+class BaseEnrollmentSerializer(serializers.ModelSerializer):
+    student_name = serializers.SerializerMethodField()
     course_title = serializers.ReadOnlyField(source='course.title')
     schedule_slot_display = serializers.SerializerMethodField()
     remaining_balance = serializers.SerializerMethodField()
-    
+    payment_method_display = serializers.CharField(source='get_payment_method_display', read_only=True)
+
     class Meta:
         model = Enrollment
         fields = (
             'id', 'student', 'student_name', 'course', 'course_title',
             'schedule_slot', 'schedule_slot_display', 'status', 'payment_status',
-            'enrollment_date', 'amount_paid', 'remaining_balance', 'notes'
+            'payment_method', 'payment_method_display', 'enrollment_date', 
+            'amount_paid', 'remaining_balance', 'is_guest',
+            'first_name', 'middle_name', 'last_name', 'phone', 'enrolled_by'
         )
-        read_only_fields = ('enrollment_date', 'status', 'payment_status', 'amount_paid', 'student')
-    
+        read_only_fields = (
+            'id', 'enrollment_date', 'status', 'payment_status', 
+            'amount_paid', 'student_name', 'course_title',
+            'schedule_slot_display', 'remaining_balance', 'payment_method_display',
+            'enrolled_by'
+        )
+
+    def get_student_name(self, obj):
+        if obj.is_guest:
+            return f"{obj.first_name} {obj.last_name}"
+        return obj.student.get_full_name() if obj.student else None
+
     def get_schedule_slot_display(self, obj):
         if obj.schedule_slot:
             days = ", ".join(obj.schedule_slot.days_of_week)
             valid_from = obj.schedule_slot.valid_from.strftime('%Y-%m-%d') if obj.schedule_slot.valid_from else "N/A"
             valid_until = obj.schedule_slot.valid_until.strftime('%Y-%m-%d') if obj.schedule_slot.valid_until else "N/A"
             return (
-                f"{obj.schedule_slot.course.title} - {days} {obj.schedule_slot.start_time.strftime('%H:%M')}-"
-                f"{obj.schedule_slot.end_time.strftime('%H:%M')} (From {valid_from} to {valid_until})"
+                f"{obj.schedule_slot.course.title} - {days} "
+                f"{obj.schedule_slot.start_time.strftime('%H:%M')}-"
+                f"{obj.schedule_slot.end_time.strftime('%H:%M')} "
+                f"(From {valid_from} to {valid_until})"
             )
         return None
-    
+
     def get_remaining_balance(self, obj):
         return obj.course.price - obj.amount_paid
-    
+
+class StudentEnrollmentSerializer(BaseEnrollmentSerializer):
+    class Meta(BaseEnrollmentSerializer.Meta):
+        read_only_fields = BaseEnrollmentSerializer.Meta.read_only_fields + (
+            'first_name', 'middle_name', 'last_name', 'phone', 'is_guest',
+            'payment_method'
+        )
+
     def validate(self, data):
-        """
-        Use Django model validation by creating a temporary instance
-        This ensures the same validation rules apply to both API and admin
-        """
-        # Create a temporary instance for validation
-        instance = self.instance or Enrollment()
+        data = super().validate(data)
+        data['is_guest'] = False
         
-        # Update instance with validated data
-        for key, value in data.items():
-            setattr(instance, key, value)
+        # Get user from context
+        user = self.context['request'].user
         
-        # Set student from request user
-        if not self.instance:  # Only on creation
-            instance.student = self.context['request'].user
+        # Create temporary instance for validation
+        instance = Enrollment(**data)
         
-        # Run model validation
+        # Auto-fill student info
+        instance.student = user
+        instance.first_name = user.first_name
+        instance.middle_name = user.middle_name
+        instance.last_name = user.last_name
+        instance.phone = user.phone
+        instance.payment_method = 'ewallet'
+        
         try:
             instance.clean()
         except ValidationError as e:
-            # Convert Django ValidationError to DRF ValidationError
-            if hasattr(e, 'message_dict'):
-                # Field-specific errors
-                raise serializers.ValidationError(e.message_dict)
-            else:
-                # General errors
-                raise serializers.ValidationError(e.messages if hasattr(e, 'messages') else str(e))
+            raise serializers.ValidationError(e.message_dict if hasattr(e, 'message_dict') else str(e))
         
         return data
+
+class GuestEnrollmentSerializer(BaseEnrollmentSerializer):
+    cash_amount = serializers.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        min_value=0.01,
+        write_only=True,
+        required=False
+    )
+
+    class Meta(BaseEnrollmentSerializer.Meta):
+        fields = BaseEnrollmentSerializer.Meta.fields + ('cash_amount',)
+        extra_kwargs = {
+            'student': {'read_only': True},
+            'is_guest': {'read_only': True},
+            'payment_method': {'read_only': True},  # Prevent duplicate
+            'first_name': {'required': True},
+            'last_name': {'required': True},
+            'phone': {'required': True}
+        }
+
+    def validate(self, data):
+        # Remove fields that will be set automatically
+        data.pop('student', None)
+        data.pop('is_guest', None)
+        data.pop('payment_method', None)  # Remove if present
+        
+            
+        return data
+
+
+# class EnrollmentSerializer(serializers.ModelSerializer):
+#     student_name = serializers.ReadOnlyField(source='student.get_full_name')
+#     course_title = serializers.ReadOnlyField(source='course.title')
+#     schedule_slot_display = serializers.SerializerMethodField()
+#     remaining_balance = serializers.SerializerMethodField()
+    
+#     class Meta:
+#         model = Enrollment
+#         fields = (
+#             'id', 'student', 'student_name', 'course', 'course_title',
+#             'schedule_slot', 'schedule_slot_display', 'status', 'payment_status',
+#             'enrollment_date', 'amount_paid', 'remaining_balance', 'notes'
+#         )
+#         read_only_fields = ('enrollment_date', 'status', 'payment_status', 'amount_paid', 'student')
+    
+#     def get_schedule_slot_display(self, obj):
+#         if obj.schedule_slot:
+#             days = ", ".join(obj.schedule_slot.days_of_week)
+#             valid_from = obj.schedule_slot.valid_from.strftime('%Y-%m-%d') if obj.schedule_slot.valid_from else "N/A"
+#             valid_until = obj.schedule_slot.valid_until.strftime('%Y-%m-%d') if obj.schedule_slot.valid_until else "N/A"
+#             return (
+#                 f"{obj.schedule_slot.course.title} - {days} {obj.schedule_slot.start_time.strftime('%H:%M')}-"
+#                 f"{obj.schedule_slot.end_time.strftime('%H:%M')} (From {valid_from} to {valid_until})"
+#             )
+#         return None
+    
+#     def get_remaining_balance(self, obj):
+#         return obj.course.price - obj.amount_paid
+    
+#     def validate(self, data):
+#         """
+#         Use Django model validation by creating a temporary instance
+#         This ensures the same validation rules apply to both API and admin
+#         """
+#         # Create a temporary instance for validation
+#         instance = self.instance or Enrollment()
+        
+#         # Update instance with validated data
+#         for key, value in data.items():
+#             setattr(instance, key, value)
+        
+#         # Set student from request user
+#         if not self.instance:  # Only on creation
+#             instance.student = self.context['request'].user
+        
+#         # Run model validation
+#         try:
+#             instance.clean()
+#         except ValidationError as e:
+#             # Convert Django ValidationError to DRF ValidationError
+#             if hasattr(e, 'message_dict'):
+#                 # Field-specific errors
+#                 raise serializers.ValidationError(e.message_dict)
+#             else:
+#                 # General errors
+#                 raise serializers.ValidationError(e.messages if hasattr(e, 'messages') else str(e))
+        
+#         return data
 
 class WishlistSerializer(serializers.ModelSerializer):
     courses = serializers.SerializerMethodField()
