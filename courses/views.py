@@ -7,6 +7,7 @@ from .models import Department, CourseType, Course, Hall, ScheduleSlot, Booking,
 from .serializers import (
     BaseEnrollmentSerializer, DepartmentSerializer, CourseTypeSerializer, CourseSerializer, GuestEnrollmentSerializer,
     HallSerializer, ScheduleSlotSerializer, BookingSerializer, StudentEnrollmentSerializer,WishlistSerializer,
+    HallFreePeriodSerializer, HallAvailabilityResponseSerializer
 )
 from django.db.models import Q, Count, Prefetch
 from core.permissions import IsOwnerOrAdminOrReception,IsStudent,IsTeacher,IsReception,IsAdmin
@@ -215,6 +216,89 @@ class HallViewSet(viewsets.ModelViewSet):
             return [IsReception()]
         return [permissions.AllowAny()]
 
+    @extend_schema(
+        parameters=[
+            OpenApiParameter(name='date', description='Date to check availability (YYYY-MM-DD)', required=True, type=OpenApiTypes.DATE),
+            OpenApiParameter(name='slot_minutes', description='Slot size in minutes (default 60)', required=False, type=OpenApiTypes.INT),
+        ],
+        responses={200: HallAvailabilityResponseSerializer}
+    )
+    @action(detail=True, methods=['get'], url_path='free-slots')
+    def free_slots(self, request, pk=None):
+        from datetime import datetime, time, timedelta
+        hall = self.get_object()
+        date_str = request.query_params.get('date')
+        slot_minutes = int(request.query_params.get('slot_minutes', 60))
+        if not date_str:
+            return Response({'error': 'date is required'}, status=400)
+        try:
+            day = datetime.strptime(date_str, "%Y-%m-%d").date()
+        except ValueError:
+            return Response({'error': 'Invalid date format'}, status=400)
+
+        # Define the working hours (customize as needed)
+        day_start = time(8, 0)
+        day_end = time(22, 0)
+
+        # Gather all bookings and schedule slots for the hall on that date
+        bookings = Booking.objects.filter(
+            hall=hall,
+            start_datetime__date=day,
+            status='approved'
+        ).order_by('start_datetime')
+        slots = ScheduleSlot.objects.filter(
+            hall=hall,
+            days_of_week__contains=[day.strftime('%a').lower()],
+            valid_from__lte=day,
+            valid_until__gte=day
+        ).order_by('start_time')
+
+        # Build a list of all occupied periods (start, end)
+        occupied = []
+        for b in bookings:
+            occupied.append((b.start_datetime.time(), b.end_datetime.time()))
+        for s in slots:
+            occupied.append((s.start_time, s.end_time))
+        occupied.sort()
+
+        # Merge overlapping occupied periods
+        merged = []
+        for start, end in sorted(occupied):
+            if not merged or start > merged[-1][1]:
+                merged.append([start, end])
+            else:
+                merged[-1][1] = max(merged[-1][1], end)
+
+        # Find free periods between merged occupied periods
+        free_periods_data = []
+        prev_end = day_start
+        for start, end in merged:
+            if prev_end < start:
+                free_periods_data.append((prev_end, start))
+            prev_end = max(prev_end, end)
+        if prev_end < day_end:
+            free_periods_data.append((prev_end, day_end))
+
+        # For each free period, break into slots
+        result_periods = []
+        for start, end in free_periods_data:
+            slots_data = []
+            slot_start = datetime.combine(day, start)
+            slot_end = datetime.combine(day, end)
+            while slot_start < slot_end:
+                next_slot = min(slot_end, slot_start + timedelta(minutes=slot_minutes))
+                slots_data.append({'start': slot_start.time(), 'end': next_slot.time()})
+                slot_start = next_slot
+            result_periods.append({'start': start, 'end': end, 'slots': slots_data})
+
+        response_data = {
+            'date': day,
+            'hall_id': hall.id,
+            'hall_name': hall.name,
+            'free_periods': result_periods
+        }
+        serializer = HallAvailabilityResponseSerializer(response_data)
+        return Response(serializer.data)
 
 class ScheduleSlotViewSet(viewsets.ModelViewSet):
     queryset = ScheduleSlot.objects.all().select_related('course', 'hall', 'teacher')

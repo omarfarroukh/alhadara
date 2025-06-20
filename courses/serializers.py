@@ -427,3 +427,18 @@ class WishlistSerializer(serializers.ModelSerializer):
             'course_type', 'department'
         )
         return WishlistCourseSerializer(workshops, many=True).data
+
+class HallFreeSlotSerializer(serializers.Serializer):
+    start = serializers.TimeField(format="%H:%M")
+    end = serializers.TimeField(format="%H:%M")
+
+class HallFreePeriodSerializer(serializers.Serializer):
+    start = serializers.TimeField(format="%H:%M")
+    end = serializers.TimeField(format="%H:%M")
+    slots = HallFreeSlotSerializer(many=True)
+
+class HallAvailabilityResponseSerializer(serializers.Serializer):
+    date = serializers.DateField()
+    hall_id = serializers.IntegerField()
+    hall_name = serializers.CharField()
+    free_periods = HallFreePeriodSerializer(many=True)
