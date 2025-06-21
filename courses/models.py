@@ -3,7 +3,7 @@ from core.models import Interest, StudyField
 from django.db.models import Q
 from django.core.validators import MinValueValidator
 from decimal import Decimal
-from datetime import date
+from datetime import date, timedelta
 from django.core.exceptions import ValidationError
 from django.contrib.auth import get_user_model
 import time
@@ -26,6 +26,45 @@ class CourseType(models.Model):
     
     def __str__(self):
         return f"{self.name}"
+    
+    def add_interest_tag(self, interest):
+        """Add an interest tag to this course type"""
+        CourseTypeTag.objects.get_or_create(
+            course_type=self,
+            interest=interest,
+            study_field=None
+        )
+    
+    def add_study_field_tag(self, study_field):
+        """Add a study field tag to this course type"""
+        CourseTypeTag.objects.get_or_create(
+            course_type=self,
+            interest=None,
+            study_field=study_field
+        )
+    
+    def remove_interest_tag(self, interest):
+        """Remove an interest tag from this course type"""
+        CourseTypeTag.objects.filter(
+            course_type=self,
+            interest=interest,
+            study_field=None
+        ).delete()
+    
+    def remove_study_field_tag(self, study_field):
+        """Remove a study field tag from this course type"""
+        CourseTypeTag.objects.filter(
+            course_type=self,
+            interest=None,
+            study_field=study_field
+        ).delete()
+    
+    def get_tags(self):
+        """Get all tags for this course type"""
+        return {
+            'interests': list(self.tags.filter(interest__isnull=False).values_list('interest__name', flat=True)),
+            'study_fields': list(self.tags.filter(study_field__isnull=False).values_list('study_field__name', flat=True))
+        }
 class CourseTypeTag(models.Model):
     course_type = models.ForeignKey(CourseType, on_delete=models.CASCADE, related_name='tags')
     interest = models.ForeignKey(Interest, on_delete=models.CASCADE, null=True, blank=True)
@@ -119,6 +158,149 @@ class Course(models.Model):
                 "The selected course type does not belong to the specified department"
             )
     
+    @classmethod
+    def get_recommended_courses(cls, user, limit=10):
+        """Get course recommendations based on user interests and study field with diversification"""
+        from core.models import ProfileInterest
+        
+        # Get user's interests with intensity and study field
+        try:
+            profile = user.profile
+            user_interests = ProfileInterest.objects.filter(profile=profile).select_related('interest')
+            user_study_field = profile.studyfield_id
+        except:
+            return cls.objects.none()
+        
+        # Build interest scoring dictionary
+        interest_scores = {pi.interest_id: pi.intensity for pi in user_interests}
+        interest_count = len(interest_scores)
+        
+        # Find course types that match user interests or study field
+        matching_tags = CourseTypeTag.objects.filter(
+            models.Q(interest_id__in=interest_scores.keys()) | 
+            models.Q(study_field=user_study_field)
+        ).values_list('course_type_id', flat=True).distinct()
+        
+        # Get courses with matching course types, exclude already enrolled
+        enrolled_course_ids = set(user.enrollments.values_list('course_id', flat=True))
+        
+        # Define time window for valid schedule slots (next 3 months)
+        today = date.today()
+        future_date = today + timedelta(days=90)  # 3 months from now
+        
+        # Get all matching courses with scoring and valid schedule slots
+        courses_with_scores = cls.objects.filter(
+            course_type_id__in=matching_tags
+        ).exclude(
+            id__in=enrolled_course_ids
+        ).filter(
+            # Only include courses with valid schedule slots
+            schedule_slots__valid_from__gte=today,
+            schedule_slots__valid_from__lte=future_date
+        ).select_related(
+            'course_type', 'department'
+        ).prefetch_related(
+            'wishlists', 'schedule_slots'
+        ).annotate(
+            # Calculate weighted score based on interest intensity
+            match_score=models.Sum(
+                models.Case(
+                    models.When(
+                        course_type__tags__interest_id__in=interest_scores.keys(),
+                        then=models.F('course_type__tags__interest_id')
+                    ),
+                    default=0
+                ),
+                output_field=models.IntegerField()
+            )
+        ).annotate(
+            # Convert interest IDs to actual intensity scores
+            weighted_score=models.Sum(
+                models.Case(
+                    *[models.When(
+                        course_type__tags__interest_id=interest_id,
+                        then=intensity
+                    ) for interest_id, intensity in interest_scores.items()],
+                    default=0
+                ),
+                output_field=models.IntegerField()
+            )
+        ).annotate(
+            # Add bonus for study field match
+            study_field_bonus=models.Case(
+                models.When(
+                    course_type__tags__study_field=user_study_field,
+                    then=3  # Bonus points for study field match
+                ),
+                default=0
+            )
+        ).annotate(
+            # Final score combines weighted interests + study field bonus
+            final_score=models.F('weighted_score') + models.F('study_field_bonus')
+        ).order_by('-final_score', 'title')
+        
+        # Implement diversification algorithm with interest count awareness
+        return cls._diversify_recommendations(courses_with_scores, limit, interest_count)
+    
+    @classmethod
+    def _diversify_recommendations(cls, courses_with_scores, limit, interest_count):
+        """Diversify recommendations by limiting courses per course type based on scoring and interest count"""
+        # Group courses by course type and their scores
+        course_type_groups = {}
+        for course in courses_with_scores:
+            course_type_id = course.course_type.id
+            if course_type_id not in course_type_groups:
+                course_type_groups[course_type_id] = {
+                    'courses': [],
+                    'max_score': 0,
+                    'course_type_name': course.course_type.name
+                }
+            course_type_groups[course_type_id]['courses'].append(course)
+            course_type_groups[course_type_id]['max_score'] = max(
+                course_type_groups[course_type_id]['max_score'], 
+                course.final_score
+            )
+        
+        # Sort course types by their maximum score
+        sorted_course_types = sorted(
+            course_type_groups.items(), 
+            key=lambda x: x[1]['max_score'], 
+            reverse=True
+        )
+        
+        # Calculate diversification limits based on interest count
+        # More interests = more diverse recommendations
+        if interest_count >= 8:
+            # High interest diversity: More courses per type, more types
+            limits = [4, 3, 3, 2, 2, 1, 1, 1]  # Up to 8 course types
+        elif interest_count >= 5:
+            # Medium interest diversity: Balanced approach
+            limits = [3, 2, 2, 1, 1, 1]  # Up to 6 course types
+        elif interest_count >= 3:
+            # Low-medium interest diversity: Focus on top types
+            limits = [3, 2, 1, 1]  # Up to 4 course types
+        else:
+            # Low interest diversity: Focus on best matches
+            limits = [3, 1, 1]  # Up to 3 course types
+        
+        recommended_courses = []
+        
+        for i, (course_type_id, group_data) in enumerate(sorted_course_types):
+            # Get the limit for this position, or default to 1 if beyond our limits array
+            max_courses = limits[i] if i < len(limits) else 1
+            max_courses = min(max_courses, len(group_data['courses']))
+            
+            # Take the top courses from this course type
+            courses_to_add = group_data['courses'][:max_courses]
+            recommended_courses.extend(courses_to_add)
+            
+            # Stop if we've reached the limit
+            if len(recommended_courses) >= limit:
+                break
+        
+        # Return the diversified list, limited to the requested amount
+        return recommended_courses[:limit]
+
 class ScheduleSlot(models.Model):
     DAY_CHOICES = (
         ('mon', 'Monday'),

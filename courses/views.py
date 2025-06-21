@@ -20,6 +20,7 @@ import time
 from decimal import Decimal, InvalidOperation
 from drf_spectacular.utils import extend_schema, OpenApiParameter,OpenApiResponse
 from drf_spectacular.types import OpenApiTypes
+from core.models import Interest, StudyField
 User = get_user_model()
 class DepartmentViewSet(viewsets.ModelViewSet):
     queryset = Department.objects.all()
@@ -93,6 +94,86 @@ class CourseTypeViewSet(viewsets.ModelViewSet):
         serializer.is_valid(raise_exception=True)
         self.perform_create(serializer)
         return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+    @extend_schema(
+        request={
+            'application/json': {
+                'type': 'object',
+                'properties': {
+                    'interest_id': {'type': 'integer', 'description': 'Interest ID to add'},
+                    'study_field_id': {'type': 'integer', 'description': 'Study field ID to add'}
+                }
+            }
+        },
+        responses={200: OpenApiResponse(description='Tag added successfully')}
+    )
+    @action(detail=True, methods=['post'])
+    def add_tag(self, request, pk=None):
+        """Add interest or study field tag to course type"""
+        course_type = self.get_object()
+        interest_id = request.data.get('interest_id')
+        study_field_id = request.data.get('study_field_id')
+        
+        if interest_id:
+            try:
+                interest = Interest.objects.get(id=interest_id)
+                course_type.add_interest_tag(interest)
+                return Response({'status': 'Interest tag added'})
+            except Interest.DoesNotExist:
+                return Response({'error': 'Interest not found'}, status=status.HTTP_404_NOT_FOUND)
+        
+        if study_field_id:
+            try:
+                study_field = StudyField.objects.get(id=study_field_id)
+                course_type.add_study_field_tag(study_field)
+                return Response({'status': 'Study field tag added'})
+            except StudyField.DoesNotExist:
+                return Response({'error': 'Study field not found'}, status=status.HTTP_404_NOT_FOUND)
+        
+        return Response({'error': 'Provide either interest_id or study_field_id'}, status=status.HTTP_400_BAD_REQUEST)
+
+    @extend_schema(
+        request={
+            'application/json': {
+                'type': 'object',
+                'properties': {
+                    'interest_id': {'type': 'integer', 'description': 'Interest ID to remove'},
+                    'study_field_id': {'type': 'integer', 'description': 'Study field ID to remove'}
+                }
+            }
+        },
+        responses={200: OpenApiResponse(description='Tag removed successfully')}
+    )
+    @action(detail=True, methods=['post'])
+    def remove_tag(self, request, pk=None):
+        """Remove interest or study field tag from course type"""
+        course_type = self.get_object()
+        interest_id = request.data.get('interest_id')
+        study_field_id = request.data.get('study_field_id')
+        
+        if interest_id:
+            try:
+                interest = Interest.objects.get(id=interest_id)
+                course_type.remove_interest_tag(interest)
+                return Response({'status': 'Interest tag removed'})
+            except Interest.DoesNotExist:
+                return Response({'error': 'Interest not found'}, status=status.HTTP_404_NOT_FOUND)
+        
+        if study_field_id:
+            try:
+                study_field = StudyField.objects.get(id=study_field_id)
+                course_type.remove_study_field_tag(study_field)
+                return Response({'status': 'Study field tag removed'})
+            except StudyField.DoesNotExist:
+                return Response({'error': 'Study field not found'}, status=status.HTTP_404_NOT_FOUND)
+        
+        return Response({'error': 'Provide either interest_id or study_field_id'}, status=status.HTTP_400_BAD_REQUEST)
+
+    @action(detail=True, methods=['get'])
+    def tags(self, request, pk=None):
+        """Get all tags for a course type"""
+        course_type = self.get_object()
+        return Response(course_type.get_tags())
 
 
 class CourseViewSet(viewsets.ModelViewSet):
@@ -203,6 +284,26 @@ class CourseViewSet(viewsets.ModelViewSet):
             queryset = queryset.filter(category__iexact=category.lower())
         
         return queryset
+
+    @extend_schema(
+        parameters=[
+            OpenApiParameter(
+                name='limit',
+                type=OpenApiTypes.INT,
+                location=OpenApiParameter.QUERY,
+                description='Number of recommendations (default: 10)',
+                required=False
+            )
+        ],
+        responses={200: CourseSerializer(many=True)}
+    )
+    @action(detail=False, methods=['get'], permission_classes=[permissions.IsAuthenticated])
+    def recommendations(self, request):
+        """Get personalized course recommendations based on user interests"""
+        limit = int(request.query_params.get('limit', 10))
+        recommended_courses = Course.get_recommended_courses(request.user, limit=limit)
+        serializer = self.get_serializer(recommended_courses, many=True)
+        return Response(serializer.data)
 
 class HallViewSet(viewsets.ModelViewSet):
     queryset = Hall.objects.all()

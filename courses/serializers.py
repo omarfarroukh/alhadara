@@ -13,10 +13,14 @@ class DepartmentSerializer(serializers.ModelSerializer):
         
 class CourseTypeSerializer(serializers.ModelSerializer):
     department_name = serializers.ReadOnlyField(source='department.name')
+    tags = serializers.SerializerMethodField()
     
     class Meta:
         model = CourseType
-        fields = ('id', 'name', 'department', 'department_name')
+        fields = ('id', 'name', 'department', 'department_name', 'tags')
+    
+    def get_tags(self, obj):
+        return obj.get_tags()
 
 class HallSerializer(serializers.ModelSerializer):
     hourly_rate = serializers.DecimalField(
