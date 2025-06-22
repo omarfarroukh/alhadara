@@ -176,6 +176,47 @@ class ScheduleSlotSerializer(serializers.ModelSerializer):
         
         return data
     
+class TeacherScheduleSlotSerializer(ScheduleSlotSerializer):
+    """Serializer for teacher's schedule slots with enrolled students"""
+    enrolled_students = serializers.SerializerMethodField()
+    enrolled_count = serializers.SerializerMethodField()
+    
+    class Meta(ScheduleSlotSerializer.Meta):
+        fields = list(ScheduleSlotSerializer.Meta.fields) + ['enrolled_students', 'enrolled_count']
+    
+    def get_enrolled_students(self, obj):
+        """Get list of enrolled students for this schedule slot"""
+        enrollments = obj.enrollments.filter(
+            status__in=['pending', 'active']
+        ).select_related('student')
+        
+        students = []
+        for enrollment in enrollments:
+            if enrollment.is_guest:
+                # For guest enrollments, use the stored name fields
+                student_name = f"{enrollment.first_name} {enrollment.last_name}".strip()
+                if enrollment.middle_name:
+                    student_name = f"{enrollment.first_name} {enrollment.middle_name} {enrollment.last_name}".strip()
+            else:
+                # For regular students, use the user's full name
+                student_name = enrollment.student.get_full_name() if enrollment.student else "Unknown"
+            
+            students.append({
+                'id': enrollment.id,
+                'name': student_name,
+                'phone': enrollment.phone or (enrollment.student.phone if enrollment.student else None),
+                'status': enrollment.status,
+                'payment_status': enrollment.payment_status,
+                'is_guest': enrollment.is_guest,
+                'enrollment_date': enrollment.enrollment_date
+            })
+        
+        return students
+    
+    def get_enrolled_count(self, obj):
+        """Get count of enrolled students for this schedule slot"""
+        return obj.enrollments.filter(status__in=['pending', 'active']).count()
+
 class BookingSerializer(serializers.ModelSerializer):
     hall_name = serializers.ReadOnlyField(source='hall.name')
     requested_by_username = serializers.ReadOnlyField(source='requested_by.username', default=None)

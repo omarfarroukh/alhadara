@@ -6,7 +6,7 @@ from django.core.exceptions import ValidationError
 from .models import Department, CourseType, Course, Hall, ScheduleSlot, Booking,Wishlist, Enrollment
 from .serializers import (
     BaseEnrollmentSerializer, DepartmentSerializer, CourseTypeSerializer, CourseSerializer, GuestEnrollmentSerializer,
-    HallSerializer, ScheduleSlotSerializer, BookingSerializer, StudentEnrollmentSerializer,WishlistSerializer,
+    HallSerializer, ScheduleSlotSerializer, TeacherScheduleSlotSerializer, BookingSerializer, StudentEnrollmentSerializer,WishlistSerializer,
     HallFreePeriodSerializer, HallAvailabilityResponseSerializer
 )
 from django.db.models import Q, Count, Prefetch
@@ -482,6 +482,56 @@ class ScheduleSlotViewSet(viewsets.ModelViewSet):
             )
         
         return super().list(request, *args, **kwargs)
+
+    @extend_schema(
+        parameters=[
+            OpenApiParameter(
+                name='upcoming_only',
+                type=OpenApiTypes.BOOL,
+                location=OpenApiParameter.QUERY,
+                description='Filter to only upcoming schedule slots (default: true)',
+                required=False
+            )
+        ],
+        responses={200: TeacherScheduleSlotSerializer(many=True)}
+    )
+    @action(detail=False, methods=['get'], permission_classes=[permissions.IsAuthenticated])
+    def my_slots(self, request):
+        """Get schedule slots associated with the current teacher"""
+        if request.user.user_type != 'teacher':
+            return Response(
+                {'error': 'This endpoint is only available for teachers'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        # Get teacher's schedule slots with optimized queries
+        queryset = ScheduleSlot.objects.filter(
+            teacher=request.user
+        ).select_related('course', 'hall').prefetch_related(
+            'enrollments__student'
+        )
+        
+        # Apply filters
+        upcoming_only = request.query_params.get('upcoming_only', 'true').lower() == 'true'
+        
+        if upcoming_only:
+            from django.utils import timezone
+            today = timezone.now().date()
+            queryset = queryset.filter(
+                Q(valid_until__gte=today) | Q(valid_until__isnull=True)
+            )
+        
+        # Apply ordering
+        queryset = queryset.order_by('start_time', 'valid_from')
+        
+        if not queryset.exists():
+            return Response(
+                {'message': 'No schedule slots found for you'},
+                status=status.HTTP_200_OK
+            )
+        
+        serializer = TeacherScheduleSlotSerializer(queryset, many=True)
+        return Response(serializer.data)
 
 class BookingViewSet(viewsets.ModelViewSet):
     serializer_class = BookingSerializer # Allow anyone to access

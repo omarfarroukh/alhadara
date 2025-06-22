@@ -63,6 +63,7 @@ INSTALLED_APPS = [
     'django_ratelimit',
     'core',
     'courses',
+    'quiz',
     'rest_framework_simplejwt.token_blacklist',
     'cloudinary_storage',
     'cloudinary',
