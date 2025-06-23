@@ -3,24 +3,30 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework import serializers
 from django.core.exceptions import ValidationError
-from .models import Department, CourseType, Course, Hall, ScheduleSlot, Booking,Wishlist, Enrollment
+from .models import Department, CourseType, Course, Hall, ScheduleSlot, Booking,Wishlist, Enrollment,Lesson,Homework,Attendance
 from .serializers import (
     BaseEnrollmentSerializer, DepartmentSerializer, CourseTypeSerializer, CourseSerializer, GuestEnrollmentSerializer,
     HallSerializer, ScheduleSlotSerializer, TeacherScheduleSlotSerializer, BookingSerializer, StudentEnrollmentSerializer,WishlistSerializer,
-    HallFreePeriodSerializer, HallAvailabilityResponseSerializer
+    HallAvailabilityResponseSerializer,LessonSerializer,HomeworkSerializer,ActiveCourseForAdminSerializer,ActiveCourseForTeacherSerializer,
+    UnifiedAttendanceSerializer,BulkAttendanceSerializer,ActiveCourseForStudentSerializer,ScheduleSlotSerializer,
+    BookingSerializer,StudentEnrollmentSerializer,GuestEnrollmentSerializer,BaseEnrollmentSerializer,
+    UnifiedAttendanceSerializer,BulkAttendanceSerializer,ActiveCourseForStudentSerializer,ScheduleSlotSerializer
 )
-from django.db.models import Q, Count, Prefetch
+from django.db.models import Q, Count, Prefetch,Sum
 from core.permissions import IsOwnerOrAdminOrReception,IsStudent,IsTeacher,IsReception,IsAdmin
 from django_filters.rest_framework import DjangoFilterBackend
 from django.contrib.auth import get_user_model
 from rest_framework.generics import get_object_or_404
-from drf_yasg.utils import swagger_auto_schema
-from drf_yasg import openapi
-import time
 from decimal import Decimal, InvalidOperation
 from drf_spectacular.utils import extend_schema, OpenApiParameter,OpenApiResponse
 from drf_spectacular.types import OpenApiTypes
+from drf_spectacular.openapi import OpenApiExample
 from core.models import Interest, StudyField
+from datetime import date
+from django.utils import timezone
+from django.conf import settings
+import logging
+logger = logging.getLogger(__name__)
 User = get_user_model()
 class DepartmentViewSet(viewsets.ModelViewSet):
     queryset = Department.objects.all()
@@ -1228,3 +1234,1479 @@ class UnifiedSearchViewSet(viewsets.ViewSet):
         }
         
         return Response(suggestions, status=status.HTTP_200_OK)
+    
+class ActiveCourseViewSet(viewsets.ReadOnlyModelViewSet):
+    """
+    ViewSet for active courses.
+    
+    - Students see their enrolled courses that have started (based on valid_from date)
+    - Teachers see courses they are teaching that have started
+    - Admins see all active courses with comprehensive information
+    - Only returns courses where valid_from <= today
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    
+    def get_active_courses_for_student(self, student):
+        """Get active courses for a student based on enrollments and schedule slots"""
+        from datetime import date
+        
+        today = date.today()
+        
+        # Get enrollments with active schedule slots
+        active_enrollments = Enrollment.objects.filter(
+            student=student,
+            status__in=['pending', 'active'],
+            schedule_slot__isnull=False,
+            schedule_slot__valid_from__lte=today
+        ).select_related(
+            'course',
+            'course__department',
+            'course__course_type',
+            'schedule_slot',
+            'schedule_slot__hall',
+            'schedule_slot__teacher'
+        ).filter(
+            # Ensure the schedule slot is still valid
+            Q(schedule_slot__valid_until__gte=today) | 
+            Q(schedule_slot__valid_until__isnull=True)
+        )
+        
+        return active_enrollments
+    
+    def get_active_courses_for_teacher(self, teacher):
+        """Get active courses for a teacher based on schedule slots"""
+        from datetime import date
+        
+        today = date.today()
+        
+        try:
+            active_slots = ScheduleSlot.objects.filter(
+                teacher=teacher,
+                valid_from__lte=today
+            ).filter(
+                Q(valid_until__gte=today) | 
+                Q(valid_until__isnull=True)
+            ).select_related(
+                'course',
+                'course__department',
+                'course__course_type',
+                'hall'
+            ).prefetch_related(
+                'enrollments'
+            )
+            
+            return active_slots
+        except Exception as e:
+            logger.error(f"Error in get_active_courses_for_teacher: {str(e)}")
+            return ScheduleSlot.objects.none()
+
+    def get_all_active_courses_for_admin(self):
+        """Get all active courses for admin users with comprehensive information"""
+        from datetime import date
+        
+        today = date.today()
+        
+        try:
+            # Get all active schedule slots with related data
+            active_slots = ScheduleSlot.objects.filter(
+                valid_from__lte=today
+            ).filter(
+                Q(valid_until__gte=today) | 
+                Q(valid_until__isnull=True)
+            ).select_related(
+                'course',
+                'course__department',
+                'course__course_type',
+                'hall',
+                'teacher'
+            ).prefetch_related(
+                'enrollments',
+                'enrollments__student'
+            ).order_by('course__title', 'valid_from')
+            
+            return active_slots
+        except Exception as e:
+            logger.error(f"Error in get_all_active_courses_for_admin: {str(e)}")
+            return ScheduleSlot.objects.none()
+
+    def get_queryset(self):
+        """Return different querysets based on user type"""
+        user = self.request.user
+        
+        if user.user_type == 'student':
+            return self.get_active_courses_for_student(user)
+        elif user.user_type == 'teacher':
+            return self.get_active_courses_for_teacher(user)
+        elif user.user_type in ['admin', 'reception']:
+            return self.get_all_active_courses_for_admin()
+        else:
+            return Enrollment.objects.none()
+    
+    # ... rest of the viewset remains the same ...
+    
+    def get_serializer_class(self):
+        """Return different serializers based on user type"""
+        user = self.request.user
+        
+        if user.user_type == 'student':
+            return ActiveCourseForStudentSerializer
+        elif user.user_type == 'teacher':
+            return ActiveCourseForTeacherSerializer
+        elif user.user_type in ['admin', 'reception']:
+            return ActiveCourseForAdminSerializer
+        else:
+            return ActiveCourseForStudentSerializer  # Default
+    
+    @extend_schema(
+        summary='Get active courses',
+        description="""
+        Get active courses based on user type:
+        
+        **For Students:**
+        - Returns courses they are enrolled in where the course has started (valid_from <= today)
+        - Includes enrollment details, payment status, and schedule information
+        
+        **For Teachers:**
+        - Returns courses they are teaching where the course has started (valid_from <= today)
+        - Includes enrolled students information and schedule details
+        
+        **For Admins/Reception:**
+        - Returns ALL active courses across the entire system
+        - Includes comprehensive information: course details, teacher info, hall info, enrollment statistics
+        - Includes financial data: total revenue, pending payments
+        - Includes utilization metrics: capacity utilization, enrollment rates
+        - Includes detailed student enrollment information
+        
+        **Active Course Criteria:**
+        - Course must have started (schedule_slot.valid_from <= today)
+        - Course must not have ended (schedule_slot.valid_until >= today or is null)
+        - For students: enrollment status must be 'pending' or 'active'
+        - For teachers: they must be assigned as the teacher for the schedule slot
+        - For admins: all active courses regardless of teacher or enrollment
+        """,
+        parameters=[
+            OpenApiParameter(
+                name='department',
+                description='Filter by department name (admin only)',
+                required=False,
+                type=str
+            ),
+            OpenApiParameter(
+                name='teacher',
+                description='Filter by teacher ID (admin only)',
+                required=False,
+                type=int
+            ),
+            OpenApiParameter(
+                name='course_type',
+                description='Filter by course type (admin only)',
+                required=False,
+                type=str
+            )
+        ],
+        responses={
+            200: OpenApiResponse(
+                description='List of active courses',
+                examples=[
+                    {
+                        'admin_example': {
+                            'summary': 'Admin Response Example',
+                            'value': {
+                                'active_courses': [
+                                    {
+                                        'course_id': 1,
+                                        'course_title': 'Python Programming Basics',
+                                        'course_description': 'Learn Python programming from scratch',
+                                        'course_price': '299.99',
+                                        'department_name': 'Computer Science',
+                                        'teacher_name': 'John Smith',
+                                        'teacher_email': 'john.smith@example.com',
+                                        'hall_name': 'Room A101',
+                                        'total_enrolled_students': 15,
+                                        'active_enrollments': 12,
+                                        'pending_enrollments': 3,
+                                        'total_revenue': '3899.87',
+                                        'pending_payments': '500.13',
+                                        'capacity_utilization': 50.0,
+                                        'enrollment_rate': 60.0
+                                    }
+                                ],
+                                'count': 1,
+                                'summary': {
+                                    'total_courses': 25,
+                                    'total_students': 487,
+                                    'total_revenue': '145,678.50',
+                                    'departments': 8,
+                                    'teachers': 15
+                                }
+                            }
+                        }
+                    }
+                ]
+            ),
+            401: OpenApiResponse(description='Authentication required'),
+            403: OpenApiResponse(description='Access forbidden - user type not allowed')
+        }
+    )
+    def list(self, request, *args, **kwargs):
+        try:
+            user = request.user
+            
+            # Check user permissions
+            if user.user_type not in ['student', 'teacher', 'admin', 'reception']:
+                return Response(
+                    {
+                        'error': 'Access denied',
+                        'message': 'This endpoint is only available for students, teachers, and administrators'
+                    },
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            queryset = self.get_queryset()
+            
+            # Apply admin-specific filters
+            if user.user_type in ['admin', 'reception']:
+                queryset = self._apply_admin_filters(request, queryset)
+            
+            if not queryset.exists():
+                user_type = user.user_type
+                if user_type == 'student':
+                    message = 'You have no active courses.'
+                elif user_type == 'teacher':
+                    message = 'You have no active courses to teach.'
+                else:
+                    message = 'No active courses found.'
+                
+                return Response(
+                    {
+                        'message': message,
+                        'active_courses': [],
+                        'user_type': user_type,
+                        'current_date': date.today().isoformat()
+                    },
+                    status=status.HTTP_200_OK
+                )
+            
+            serializer = self.get_serializer(queryset, many=True)
+            response_data = {
+                'active_courses': serializer.data,
+                'count': len(serializer.data),
+                'user_type': user.user_type,
+                'current_date': date.today().isoformat()
+            }
+            
+            # Add summary for admin users
+            if user.user_type in ['admin', 'reception']:
+                response_data['summary'] = self._get_admin_summary(queryset)
+            
+            return Response(response_data, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            logger.error(f"Error in ActiveCourseViewSet: {str(e)}", exc_info=True)
+            return Response(
+                {
+                    'error': 'An unexpected error occurred',
+                    'details': str(e) if settings.DEBUG else 'Please contact support',
+                    'support': 'contact@example.com'
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    def _apply_admin_filters(self, request, queryset):
+        """Apply filtering for admin users"""
+        department = request.query_params.get('department')
+        teacher = request.query_params.get('teacher')
+        course_type = request.query_params.get('course_type')
+        
+        if department:
+            queryset = queryset.filter(course__department__name__icontains=department)
+        
+        if teacher:
+            try:
+                teacher_id = int(teacher)
+                queryset = queryset.filter(teacher_id=teacher_id)
+            except ValueError:
+                pass  # Invalid teacher ID, ignore filter
+        
+        if course_type:
+            queryset = queryset.filter(course__course_type__name__icontains=course_type)
+        
+        return queryset
+    
+    def _get_admin_summary(self, queryset):
+        """Generate summary statistics for admin view"""
+        from decimal import Decimal
+        from collections import defaultdict
+        
+        total_courses = queryset.count()
+        total_students = 0
+        total_revenue = Decimal('0')
+        departments = set()
+        teachers = set()
+        
+        for slot in queryset:
+            student_count = slot.enrollments.filter(
+                status__in=['pending', 'active']
+            ).count()
+            total_students += student_count
+            
+            revenue = slot.enrollments.filter(
+                status__in=['pending', 'active']
+            ).aggregate(
+                total=Sum('amount_paid')
+            )['total'] or Decimal('0')
+            total_revenue += revenue
+            
+            departments.add(slot.course.department.name)
+            if slot.teacher:
+                teachers.add(slot.teacher.id)
+        
+        return {
+            'total_courses': total_courses,
+            'total_students': total_students,
+            'total_revenue': str(total_revenue),
+            'departments': len(departments),
+            'teachers': len(teachers)
+        }
+    
+    @extend_schema(
+        summary='Get specific active course details',
+        description="""
+        Get details of a specific active course by ID.
+        
+        **For Students:** Returns detailed information about their enrolled course
+        **For Teachers:** Returns detailed information about the course they're teaching including student list
+        **For Admins:** Returns comprehensive information about any active course
+        
+        The course must be active (started and not ended) for the user to access it.
+        """,
+        responses={
+            200: OpenApiResponse(description='Active course details'),
+            404: OpenApiResponse(description='Active course not found or not accessible'),
+            403: OpenApiResponse(description='Access forbidden')
+        }
+    )
+    def retrieve(self, request, pk=None):
+        """Retrieve specific active course details"""
+        user = request.user
+        
+        if user.user_type not in ['student', 'teacher', 'admin', 'reception']:
+            return Response(
+                {'error': 'Access denied'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        try:
+            if user.user_type == 'student':
+                # For students, pk is the enrollment ID
+                instance = self.get_queryset().get(id=pk)
+            else:
+                # For teachers and admins, pk is the schedule slot ID
+                instance = self.get_queryset().get(id=pk)
+                
+            serializer = self.get_serializer(instance)
+            return Response(serializer.data)
+            
+        except (Enrollment.DoesNotExist, ScheduleSlot.DoesNotExist):
+            return Response(
+                {'error': 'Active course not found or you do not have access to it'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+    
+    @extend_schema(
+        summary='Get active courses statistics',
+        description='Get statistics about active courses for the current user',
+        responses={
+            200: OpenApiResponse(
+                description='Statistics about active courses',
+                examples=[
+                    {
+                        'admin_stats': {
+                            'summary': 'Admin Statistics',
+                            'value': {
+                                'total_active_courses': 25,
+                                'total_enrolled_students': 487,
+                                'total_revenue': '145,678.50',
+                                'pending_payments': '12,345.67',
+                                'courses_by_department': {
+                                    'Computer Science': 8,
+                                    'Mathematics': 6,
+                                    'Business': 5,
+                                    'Arts': 6
+                                },
+                                'courses_by_type': {
+                                    'Programming': 10,
+                                    'Theory': 8,
+                                    'Practical': 7
+                                },
+                                'enrollment_statistics': {
+                                    'average_students_per_course': 19.5,
+                                    'highest_enrolled_course': 35,
+                                    'lowest_enrolled_course': 5,
+                                    'courses_near_capacity': 3
+                                },
+                                'financial_overview': {
+                                    'average_revenue_per_course': '5,827.14',
+                                    'payment_completion_rate': 87.2,
+                                    'total_potential_revenue': '167,890.25'
+                                }
+                            }
+                        }
+                    }
+                ]
+            )
+        }
+    )
+    @action(detail=False, methods=['get'], url_path='statistics')
+    def statistics(self, request):
+        """Get statistics about active courses"""
+        user = request.user
+        
+        if user.user_type not in ['student', 'teacher', 'admin', 'reception']:
+            return Response(
+                {'error': 'Access denied'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        queryset = self.get_queryset()
+        
+        if user.user_type == 'student':
+            stats = self._get_student_statistics(queryset)
+        elif user.user_type == 'teacher':
+            stats = self._get_teacher_statistics(queryset)
+        else:  # admin or reception
+            stats = self._get_admin_statistics(queryset)
+        
+        return Response(stats, status=status.HTTP_200_OK)
+    
+    def _get_student_statistics(self, enrollments):
+        """Calculate statistics for student's active courses"""
+        from decimal import Decimal
+        from collections import defaultdict
+        
+        total_courses = enrollments.count()
+        total_paid = enrollments.aggregate(
+            total=Sum('amount_paid')
+        )['total'] or Decimal('0')
+        
+        # Group by department
+        dept_counts = defaultdict(int)
+        status_counts = defaultdict(int)
+        payment_counts = {'fully_paid': 0, 'partially_paid': 0}
+        
+        for enrollment in enrollments:
+            dept_counts[enrollment.course.department.name] += 1
+            status_counts[enrollment.status] += 1
+            
+            if enrollment.amount_paid >= enrollment.course.price:
+                payment_counts['fully_paid'] += 1
+            else:
+                payment_counts['partially_paid'] += 1
+        
+        return {
+            'total_active_courses': total_courses,
+            'total_amount_paid': str(total_paid),
+            'courses_by_department': dict(dept_counts),
+            'courses_by_status': dict(status_counts),
+            'payment_summary': payment_counts,
+            'current_date': date.today().isoformat()
+        }
+    
+    def _get_teacher_statistics(self, schedule_slots):
+        """Calculate statistics for teacher's active courses"""
+        from collections import defaultdict
+        
+        total_courses = schedule_slots.count()
+        total_students = 0
+        dept_counts = defaultdict(int)
+        
+        for slot in schedule_slots:
+            students_count = slot.enrollments.filter(
+                status__in=['pending', 'active']
+            ).count()
+            total_students += students_count
+            dept_counts[slot.course.department.name] += 1
+        
+        avg_students = total_students / total_courses if total_courses > 0 else 0
+        
+        return {
+            'total_active_courses': total_courses,
+            'total_enrolled_students': total_students,
+            'courses_by_department': dict(dept_counts),
+            'average_students_per_course': round(avg_students, 1),
+            'current_date': date.today().isoformat()
+        }
+    
+    def _get_admin_statistics(self, schedule_slots):
+        """Calculate comprehensive statistics for admin users"""
+        from decimal import Decimal
+        from collections import defaultdict
+        
+        total_courses = schedule_slots.count()
+        total_students = 0
+        total_revenue = Decimal('0')
+        total_pending_payments = Decimal('0')
+        total_potential_revenue = Decimal('0')
+        
+        dept_counts = defaultdict(int)
+        type_counts = defaultdict(int)
+        enrollment_stats = []
+        revenue_stats = []
+        
+        courses_near_capacity = 0
+        fully_paid_enrollments = 0
+        total_enrollments = 0
+        
+        for slot in schedule_slots:
+            # Get enrollments for this slot
+            enrollments = slot.enrollments.filter(status__in=['pending', 'active'])
+            student_count = enrollments.count()
+            total_students += student_count
+            total_enrollments += student_count
+            
+            # Revenue calculations
+            slot_revenue = enrollments.aggregate(
+                total=Sum('amount_paid')
+            )['total'] or Decimal('0')
+            total_revenue += slot_revenue
+            
+            # Calculate pending payments for this slot
+            slot_pending = Decimal('0')
+            slot_potential = Decimal('0')
+            for enrollment in enrollments:
+                remaining = enrollment.course.price - enrollment.amount_paid
+                slot_pending += max(remaining, Decimal('0'))
+                slot_potential += enrollment.course.price
+                
+                if enrollment.amount_paid >= enrollment.course.price:
+                    fully_paid_enrollments += 1
+            
+            total_pending_payments += slot_pending
+            total_potential_revenue += slot_potential
+            
+            # Department and type counts
+            dept_counts[slot.course.department.name] += 1
+            type_counts[slot.course.course_type.name] += 1
+            
+            # Enrollment statistics
+            enrollment_stats.append(student_count)
+            revenue_stats.append(float(slot_revenue))
+            
+            # Check capacity utilization
+            max_capacity = min(
+                slot.course.max_students if slot.course.max_students else float('inf'),
+                slot.hall.capacity if slot.hall and slot.hall.capacity else float('inf')
+            )
+            
+            if max_capacity != float('inf') and student_count >= max_capacity * 0.9:
+                courses_near_capacity += 1
+        
+        # Calculate averages and percentages
+        avg_students = total_students / total_courses if total_courses > 0 else 0
+        avg_revenue = total_revenue / total_courses if total_courses > 0 else Decimal('0')
+        payment_completion_rate = (fully_paid_enrollments / total_enrollments * 100) if total_enrollments > 0 else 0
+        
+        enrollment_overview = {
+            'average_students_per_course': round(avg_students, 1),
+            'highest_enrolled_course': max(enrollment_stats) if enrollment_stats else 0,
+            'lowest_enrolled_course': min(enrollment_stats) if enrollment_stats else 0,
+            'courses_near_capacity': courses_near_capacity
+        }
+        
+        financial_overview = {
+            'average_revenue_per_course': str(round(avg_revenue, 2)),
+            'payment_completion_rate': round(payment_completion_rate, 1),
+            'total_potential_revenue': str(total_potential_revenue)
+        }
+        
+        return {
+            'total_active_courses': total_courses,
+            'total_enrolled_students': total_students,
+            'total_revenue': str(total_revenue),
+            'pending_payments': str(total_pending_payments),
+            'courses_by_department': dict(dept_counts),
+            'courses_by_type': dict(type_counts),
+            'enrollment_statistics': enrollment_overview,
+            'financial_overview': financial_overview,
+            'current_date': date.today().isoformat(),
+            'last_updated': timezone.now().isoformat()
+        }
+    
+    @extend_schema(
+        summary='Export active courses data',
+        description='Export active courses data in various formats (admin only)',
+        parameters=[
+            OpenApiParameter(
+                name='format',
+                description='Export format: csv, excel, pdf',
+                required=False,
+                type=str,
+                default='csv'
+            ),
+            OpenApiParameter(
+                name='include_students',
+                description='Include detailed student information',
+                required=False,
+                type=bool,
+                default=False
+            )
+        ],
+        responses={
+            200: OpenApiResponse(description='Exported data file'),
+            403: OpenApiResponse(description='Access forbidden - admin only'),
+        }
+    )
+    @action(detail=False, methods=['get'], url_path='export')
+    def export_data(self, request):
+        """Export active courses data (admin only)"""
+        user = request.user
+        
+        if user.user_type not in ['admin', 'reception']:
+            return Response(
+                {'error': 'Access denied - admin privileges required'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        export_format = request.query_params.get('format', 'csv').lower()
+        include_students = request.query_params.get('include_students', 'false').lower() == 'true'
+        
+        try:
+            queryset = self.get_queryset()
+            
+            if export_format == 'csv':
+                return self._export_csv(queryset, include_students)
+            elif export_format == 'excel':
+                return self._export_excel(queryset, include_students)
+            elif export_format == 'pdf':
+                return self._export_pdf(queryset, include_students)
+            else:
+                return Response(
+                    {'error': 'Invalid format. Supported formats: csv, excel, pdf'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+                
+        except Exception as e:
+            logger.error(f"Export error: {str(e)}")
+            return Response(
+                {'error': 'Export failed', 'details': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    def _export_csv(self, queryset, include_students):
+        """Export data as CSV"""
+        import csv
+        from django.http import HttpResponse
+        from io import StringIO
+        
+        output = StringIO()
+        writer = csv.writer(output)
+        
+        # Write headers
+        headers = [
+            'Course Title', 'Department', 'Teacher', 'Hall', 'Schedule',
+            'Start Date', 'End Date', 'Enrolled Students', 'Total Revenue',
+            'Pending Payments', 'Capacity Utilization'
+        ]
+        
+        if include_students:
+            headers.extend(['Student Details'])
+        
+        writer.writerow(headers)
+        
+        # Write data
+        for slot in queryset:
+            enrollments = slot.enrollments.filter(status__in=['pending', 'active'])
+            student_count = enrollments.count()
+            
+            revenue = enrollments.aggregate(
+                total=Sum('amount_paid')
+            )['total'] or 0
+            
+            pending = sum(
+                max(e.course.price - e.amount_paid, 0) for e in enrollments
+            )
+            
+            schedule = f"{', '.join(slot.days_of_week)} {slot.start_time}-{slot.end_time}"
+            
+            capacity_util = 0
+            if slot.hall and slot.hall.capacity:
+                capacity_util = round((student_count / slot.hall.capacity) * 100, 1)
+            
+            row = [
+                slot.course.title,
+                slot.course.department.name,
+                slot.teacher.get_full_name() if slot.teacher else 'N/A',
+                slot.hall.name if slot.hall else 'N/A',
+                schedule,
+                slot.valid_from,
+                slot.valid_until or 'Ongoing',
+                student_count,
+                revenue,
+                pending,
+                f"{capacity_util}%"
+            ]
+            
+            if include_students:
+                student_details = '; '.join([
+                    f"{e.student.get_full_name()} ({e.status})"
+                    for e in enrollments
+                ])
+                row.append(student_details)
+            
+            writer.writerow(row)
+        
+        # Create response
+        response = HttpResponse(output.getvalue(), content_type='text/csv')
+        response['Content-Disposition'] = f'attachment; filename="active_courses_{date.today()}.csv"'
+        return response
+    
+    def _export_excel(self, queryset, include_students):
+        """Export data as Excel (placeholder - requires openpyxl)"""
+        return Response(
+            {'message': 'Excel export not implemented. Please use CSV format.'},
+            status=status.HTTP_501_NOT_IMPLEMENTED
+        )
+    
+    def _export_pdf(self, queryset, include_students):
+        """Export data as PDF (placeholder - requires reportlab)"""
+        return Response(
+            {'message': 'PDF export not implemented. Please use CSV format.'},
+            status=status.HTTP_501_NOT_IMPLEMENTED
+        )
+    
+    @extend_schema(
+        summary='Get dashboard data for admin',
+        description='Get comprehensive dashboard data for admin users including charts and metrics',
+        responses={
+            200: OpenApiResponse(description='Dashboard data'),
+            403: OpenApiResponse(description='Access forbidden - admin only')
+        }
+    )
+    @action(detail=False, methods=['get'], url_path='dashboard')
+    def dashboard(self, request):
+        """Get dashboard data for admin users"""
+        user = request.user
+        
+        if user.user_type not in ['admin', 'reception']:
+            return Response(
+                {'error': 'Access denied - admin privileges required'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        try:
+            queryset = self.get_queryset()
+            
+            # Get basic statistics
+            stats = self._get_admin_statistics(queryset)
+            
+            # Get additional dashboard data
+            dashboard_data = {
+                'statistics': stats,
+                'recent_enrollments': self._get_recent_enrollments(),
+                'course_performance': self._get_course_performance(queryset),
+                'teacher_workload': self._get_teacher_workload(queryset),
+                'hall_utilization': self._get_hall_utilization(queryset),
+                'revenue_trends': self._get_revenue_trends(queryset),
+                'alerts': self._get_system_alerts(queryset)
+            }
+            
+            return Response(dashboard_data, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            logger.error(f"Dashboard error: {str(e)}")
+            return Response(
+                {'error': 'Failed to load dashboard data'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    def _get_recent_enrollments(self):
+        """Get recent enrollments across all active courses"""
+        from datetime import timedelta
+        
+        recent_date = timezone.now() - timedelta(days=7)
+        recent_enrollments = Enrollment.objects.filter(
+            enrollment_date__gte=recent_date,
+            status__in=['pending', 'active']
+        ).select_related(
+            'student', 'course', 'schedule_slot'
+        ).order_by('-enrollment_date')[:10]
+        
+        return [
+            {
+                'student_name': e.student.get_full_name(),
+                'course_title': e.course.title,
+                'enrollment_date': e.enrollment_date,
+                'status': e.status,
+                'payment_status': e.payment_status
+            }
+            for e in recent_enrollments
+        ]
+    
+    def _get_course_performance(self, queryset):
+        """Get course performance metrics"""
+        performance_data = []
+        
+        for slot in queryset[:10]:  # Top 10 courses
+            enrollments = slot.enrollments.filter(status__in=['pending', 'active'])
+            student_count = enrollments.count()
+            
+            performance_data.append({
+                'course_title': slot.course.title,
+                'enrolled_students': student_count,
+                'max_students': slot.course.max_students,
+                'enrollment_rate': round((student_count / slot.course.max_students * 100), 1) if slot.course.max_students else 0,
+                'revenue': str(enrollments.aggregate(total=Sum('amount_paid'))['total'] or 0)
+            })
+        
+        return sorted(performance_data, key=lambda x: x['enrolled_students'], reverse=True)
+    
+    def _get_teacher_workload(self, queryset):
+        """Get teacher workload distribution"""
+        from collections import defaultdict
+        
+        teacher_workload = defaultdict(int)
+        for slot in queryset:
+            if slot.teacher:
+                teacher_workload[slot.teacher.get_full_name()] += 1
+        
+        return [
+            {'teacher_name': teacher, 'active_courses': count}
+            for teacher, count in sorted(teacher_workload.items(), key=lambda x: x[1], reverse=True)
+        ]
+    
+    def _get_hall_utilization(self, queryset):
+        """Get hall utilization statistics"""
+        from collections import defaultdict
+        
+        hall_usage = defaultdict(int)
+        for slot in queryset:
+            if slot.hall:
+                hall_usage[slot.hall.name] += 1
+        
+        return [
+            {'hall_name': hall, 'active_courses': count}
+            for hall, count in sorted(hall_usage.items(), key=lambda x: x[1], reverse=True)
+        ]
+    
+    def _get_revenue_trends(self, queryset):
+        """Get revenue trends (placeholder for time-based analysis)"""
+        # This would typically involve time-series data
+        # For now, return basic revenue by department
+        from collections import defaultdict
+        from decimal import Decimal
+        
+        dept_revenue = defaultdict(lambda: Decimal('0'))
+        
+        for slot in queryset:
+            revenue = slot.enrollments.filter(
+                status__in=['pending', 'active']
+            ).aggregate(
+                total=Sum('amount_paid')
+            )['total'] or Decimal('0')
+            
+            dept_revenue[slot.course.department.name] += revenue
+        
+        return [
+            {'department': dept, 'revenue': str(revenue)}
+            for dept, revenue in sorted(dept_revenue.items(), key=lambda x: x[1], reverse=True)
+        ]
+    
+    def _get_system_alerts(self, queryset):
+        """Get system alerts and notifications"""
+        alerts = []
+        
+        # Check for courses near capacity
+        for slot in queryset:
+            student_count = slot.enrollments.filter(status__in=['pending', 'active']).count()
+            
+            if slot.course.max_students and student_count >= slot.course.max_students * 0.9:
+                alerts.append({
+                    'type': 'warning',
+                    'message': f"Course '{slot.course.title}' is near capacity ({student_count}/{slot.course.max_students})",
+                    'course_id': slot.course.id,
+                    'priority': 'medium'
+                })
+            
+            # Check for courses with many pending payments
+            pending_count = slot.enrollments.filter(
+                status__in=['pending', 'active'],
+                payment_status__in=['pending', 'partial']
+            ).count()
+            
+            if pending_count > 5:
+                alerts.append({
+                    'type': 'info',
+                    'message': f"Course '{slot.course.title}' has {pending_count} students with pending payments",
+                    'course_id': slot.course.id,
+                    'priority': 'low'
+                })
+        
+        return alerts[:5]  # Return top 5 alerts
+                                
+class LessonViewSet(viewsets.ModelViewSet):
+    """
+    ViewSet for managing lessons
+    
+    - Teachers can create, update, delete lessons for their courses
+    - Students can view lessons for courses they're enrolled in
+    - Admins can view all lessons
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    
+    def get_queryset(self):
+        """Return lessons based on user type"""
+        # Handle schema generation case
+        if getattr(self, 'swagger_fake_view', False):
+            return Lesson.objects.none()
+            
+        user = self.request.user
+        
+        if user.user_type == 'teacher':
+            # Teachers see lessons they created
+            return Lesson.objects.filter(teacher=user).select_related(
+                'course', 'schedule_slot', 'teacher'
+            ).prefetch_related('homework_assignments', 'attendance_records')
+        
+        elif user.user_type == 'student':
+            # Students see lessons for courses they're enrolled in
+            from .models import Enrollment  # Adjust import as needed
+            enrolled_courses = Enrollment.objects.filter(
+                student=user,
+                status__in=['pending', 'active']
+            ).values_list('course_id', flat=True)
+            
+            return Lesson.objects.filter(
+                course_id__in=enrolled_courses
+            ).select_related(
+                'course', 'schedule_slot', 'teacher'
+            ).prefetch_related('homework_assignments', 'attendance_records')
+        
+        elif user.user_type in ['admin', 'reception']:
+            # Admins see all lessons
+            return Lesson.objects.all().select_related(
+                'course', 'schedule_slot', 'teacher'
+            ).prefetch_related('homework_assignments', 'attendance_records')
+        
+        return Lesson.objects.none()
+    
+    def get_serializer_class(self):
+        """Return appropriate serializer based on user type"""
+        # Handle schema generation case
+        if getattr(self, 'swagger_fake_view', False):
+            return LessonSerializer
+            
+        return LessonSerializer
+    
+    def perform_create(self, serializer):
+        """Set teacher to current user when creating lesson"""
+        serializer.save(teacher=self.request.user)
+    
+    @extend_schema(
+        summary='Create a new lesson',
+        description="""
+        Create a new lesson. Only teachers can create lessons.
+        The teacher field will be automatically set to the current user.
+        """,
+        request=LessonSerializer,
+        responses={
+            201: LessonSerializer,
+            400: 'Bad Request - Validation errors',
+            403: 'Forbidden - Only teachers can create lessons'
+        }
+    )
+    def create(self, request, *args, **kwargs):
+        """Create a new lesson"""
+        if request.user.user_type != 'teacher':
+            return Response(
+                {'error': 'Only teachers can create lessons'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        return super().create(request, *args, **kwargs)
+    
+    @extend_schema(
+        summary='List lessons',
+        description="""
+        Get lessons based on user type:
+        - Teachers: Lessons they created
+        - Students: Lessons for enrolled courses
+        - Admins: All lessons
+        """,
+        parameters=[
+            OpenApiParameter(name='course', description='Filter by course ID', required=False, type=int),
+            OpenApiParameter(name='status', description='Filter by lesson status', required=False, type=str),
+            OpenApiParameter(name='lesson_date', description='Filter by lesson date (YYYY-MM-DD)', required=False, type=str)
+        ]
+    )
+    def list(self, request, *args, **kwargs):
+        queryset = self.get_queryset()
+        
+        # Apply filters
+        course_id = request.query_params.get('course')
+        status_filter = request.query_params.get('status')
+        lesson_date = request.query_params.get('lesson_date')
+        
+        if course_id:
+            queryset = queryset.filter(course_id=course_id)
+        if status_filter:
+            queryset = queryset.filter(status=status_filter)
+        if lesson_date:
+            queryset = queryset.filter(lesson_date=lesson_date)
+        
+        serializer = self.get_serializer(queryset, many=True)
+        return Response({
+            'lessons': serializer.data,
+            'count': len(serializer.data),
+            'user_type': request.user.user_type
+        })
+    
+    @extend_schema(
+        summary='Update a lesson',
+        description='Update an existing lesson. Only the lesson creator can update it.',
+        request=LessonSerializer,
+        responses={
+            200: LessonSerializer,
+            400: 'Bad Request - Validation errors',
+            403: 'Forbidden - Not the lesson creator',
+            404: 'Not Found'
+        }
+    )
+    def update(self, request, *args, **kwargs):
+        return super().update(request, *args, **kwargs)
+    
+    @extend_schema(
+        summary='Partially update a lesson',
+        description='Partially update an existing lesson. Only the lesson creator can update it.',
+        request=LessonSerializer,
+        responses={
+            200: LessonSerializer,
+            400: 'Bad Request - Validation errors',
+            403: 'Forbidden - Not the lesson creator',
+            404: 'Not Found'
+        }
+    )
+    def partial_update(self, request, *args, **kwargs):
+        return super().partial_update(request, *args, **kwargs)
+    
+    @extend_schema(
+        summary='Get lesson details',
+        description='Get detailed information about a specific lesson',
+        responses={
+            200: LessonSerializer,
+            404: 'Not Found'
+        }
+    )
+    def retrieve(self, request, *args, **kwargs):
+        return super().retrieve(request, *args, **kwargs)
+    
+    @extend_schema(
+        summary='Delete a lesson',
+        description='Delete a lesson. Only the lesson creator can delete it.',
+        responses={
+            204: 'No Content - Successfully deleted',
+            403: 'Forbidden - Not the lesson creator',
+            404: 'Not Found'
+        }
+    )
+    def destroy(self, request, *args, **kwargs):
+        return super().destroy(request, *args, **kwargs)
+    
+    @extend_schema(
+        summary='Get lessons for a specific course',
+        description='Get all lessons for a specific course (if user has access)'
+    )
+    @action(detail=False, methods=['get'], url_path='by-course/(?P<course_id>[^/.]+)')
+    def by_course(self, request, course_id=None):
+        """Get lessons for a specific course"""
+        queryset = self.get_queryset().filter(course_id=course_id)
+        serializer = self.get_serializer(queryset, many=True)
+        
+        return Response({
+            'course_id': course_id,
+            'lessons': serializer.data,
+            'count': len(serializer.data)
+        })
+    
+    @extend_schema(
+        summary='Create multiple lessons at once',
+        description='Allow teachers to create multiple lessons for a course',
+        request={
+            'type': 'object',
+            'properties': {
+                'lessons': {
+                    'type': 'array',
+                    'items': {
+                        'type': 'object',
+                        'properties': {
+                            'title': {'type': 'string'},
+                            'notes': {'type': 'string'},
+                            'course': {'type': 'integer'},
+                            'schedule_slot': {'type': 'integer'},
+                            'lesson_order': {'type': 'integer'},
+                            'lesson_date': {'type': 'string', 'format': 'date'},
+                            'duration_minutes': {'type': 'integer'},
+                            'status': {'type': 'string', 'enum': ['scheduled', 'in_progress', 'completed', 'cancelled']}
+                        }
+                    }
+                }
+            },
+            'required': ['lessons']
+        },
+        examples=[
+            OpenApiExample(
+                'Bulk Create Example',
+                value={
+                    'lessons': [
+                        {
+                            'title': 'Introduction to Python',
+                            'notes': 'Basic Python concepts',
+                            'course': 1,
+                            'schedule_slot': 1,
+                            'lesson_order': 1,
+                            'lesson_date': '2024-01-15',
+                            'duration_minutes': 90,
+                            'status': 'scheduled'
+                        }
+                    ]
+                }
+            )
+        ]
+    )
+    @action(detail=False, methods=['post'])
+    def bulk_create(self, request):
+        """Create multiple lessons at once"""
+        if request.user.user_type != 'teacher':
+            return Response(
+                {'error': 'Only teachers can create lessons'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        lessons_data = request.data.get('lessons', [])
+        if not lessons_data:
+            return Response(
+                {'error': 'No lessons data provided'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        created_lessons = []
+        errors = []
+        
+        for i, lesson_data in enumerate(lessons_data):
+            serializer = LessonSerializer(data=lesson_data, context={'request': request})
+            if serializer.is_valid():
+                lesson = serializer.save(teacher=request.user)
+                created_lessons.append(serializer.data)
+            else:
+                errors.append({
+                    'index': i,
+                    'errors': serializer.errors
+                })
+        
+        return Response({
+            'created': len(created_lessons),
+            'lessons': created_lessons,
+            'errors': errors
+        }, status=status.HTTP_201_CREATED if created_lessons else status.HTTP_400_BAD_REQUEST)
+
+class HomeworkViewSet(viewsets.ModelViewSet):
+    """
+    ViewSet for Homework without submission functionality
+    """
+    serializer_class = HomeworkSerializer
+    permission_classes = [permissions.IsAuthenticated]
+    filterset_fields = ['course', 'lesson', 'status']
+    
+    def get_queryset(self):
+        """Return appropriate homework based on user type"""
+        user = self.request.user
+        
+        base_queryset = Homework.objects.select_related(
+            'lesson', 'course', 'teacher'
+        )
+        
+        if user.user_type == 'teacher':
+            return base_queryset.filter(teacher=user)
+        
+        elif user.user_type == 'student':
+            enrolled_courses = Enrollment.objects.filter(
+                student=user,
+                status__in=['pending', 'active']
+            ).values_list('course_id', flat=True)
+            
+            return base_queryset.filter(
+                course_id__in=enrolled_courses,
+                status='published'
+            ).exclude(deadline__lt=timezone.now())  # This excludes expired homework
+        
+        elif user.user_type in ['admin', 'reception']:
+            return base_queryset
+        
+        return Homework.objects.none()
+
+    def perform_create(self, serializer):
+        """Auto-set teacher and course when creating homework"""
+        serializer.save(
+            teacher=self.request.user,
+            course=serializer.validated_data['lesson'].course,
+            status='published'
+        )
+
+    @action(detail=False, methods=['get'])
+    def overdue(self, request):
+        """Get overdue homework assignments"""
+        queryset = self.filter_queryset(self.get_queryset())
+        overdue_hw = queryset.filter(deadline__lt=timezone.now())
+        serializer = self.get_serializer(overdue_hw, many=True)
+        return Response(serializer.data)
+
+    @action(detail=False, methods=['get'])
+    def upcoming(self, request):
+        """Get upcoming homework assignments"""
+        queryset = self.filter_queryset(self.get_queryset())
+        upcoming_hw = queryset.filter(deadline__gte=timezone.now())
+        serializer = self.get_serializer(upcoming_hw, many=True)
+        return Response(serializer.data)
+
+    def list(self, request, *args, **kwargs):
+        """List homework with filtering options"""
+        queryset = self.filter_queryset(self.get_queryset())
+        
+        lesson_id = request.query_params.get('lesson')
+        overdue_filter = request.query_params.get('overdue')
+        
+        if lesson_id:
+            queryset = queryset.filter(lesson_id=lesson_id)
+        
+        if overdue_filter == 'true':
+            queryset = queryset.filter(deadline__lt=timezone.now())
+        elif overdue_filter == 'false':
+            queryset = queryset.filter(deadline__gte=timezone.now())
+        
+        page = self.paginate_queryset(queryset)
+        if page is not None:
+            serializer = self.get_serializer(page, many=True)
+            return self.get_paginated_response(serializer.data)
+        
+        serializer = self.get_serializer(queryset, many=True)
+        return Response(serializer.data)
+
+class AttendanceViewSet(viewsets.ModelViewSet):
+    """
+    Simplified ViewSet using the unified serializer
+    """
+    serializer_class = UnifiedAttendanceSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        user = self.request.user
+        queryset = Attendance.objects.select_related(
+            'student', 'course', 'lesson', 'teacher'
+        )
+        
+        if user.user_type == 'teacher':
+            return queryset.filter(teacher=user)
+        elif user.user_type == 'student':
+            return queryset.filter(student=user)
+        elif user.user_type in ['admin', 'reception']:
+            return queryset
+        return Attendance.objects.none()
+
+    def perform_create(self, serializer):
+        """Auto-set teacher when creating records"""
+        serializer.save(teacher=self.request.user)
+
+    @extend_schema(
+        summary='Create attendance record',
+        description="""
+        Create a new attendance record for a student in a lesson.
+        The teacher field is automatically set to the current user.
+        """,
+        request=UnifiedAttendanceSerializer,
+        responses={201: UnifiedAttendanceSerializer}
+    )
+    def create(self, request, *args, **kwargs):
+        """Create attendance record with proper validation"""
+        if request.user.user_type != 'teacher':
+            return Response(
+                {'error': 'Only teachers can create attendance records'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        self.perform_create(serializer)
+        
+        headers = self.get_success_headers(serializer.data)
+        return Response(
+            serializer.data,
+            status=status.HTTP_201_CREATED,
+            headers=headers
+        )
+
+    @extend_schema(
+        parameters=[
+            OpenApiParameter(name='student', description='Filter by student ID', required=False, type=int),
+            OpenApiParameter(name='date_after', description='Filter records after date (YYYY-MM-DD)', required=False, type=str),
+            OpenApiParameter(name='date_before', description='Filter records before date (YYYY-MM-DD)', required=False, type=str)
+        ]
+    )
+    def list(self, request, *args, **kwargs):
+        """List attendance records with enhanced filtering"""
+        queryset = self.filter_queryset(self.get_queryset())
+        
+        # Additional filters
+        student_id = request.query_params.get('student')
+        date_after = request.query_params.get('date_after')
+        date_before = request.query_params.get('date_before')
+        
+        if student_id and request.user.user_type in ['teacher', 'admin']:
+            queryset = queryset.filter(student_id=student_id)
+        
+        if date_after:
+            queryset = queryset.filter(lesson__lesson_date__gte=date_after)
+        if date_before:
+            queryset = queryset.filter(lesson__lesson_date__lte=date_before)
+        
+        page = self.paginate_queryset(queryset)
+        if page is not None:
+            serializer = self.get_serializer(page, many=True)
+            return self.get_paginated_response(serializer.data)
+        
+        serializer = self.get_serializer(queryset, many=True)
+        return Response({
+            'attendance_records': serializer.data,
+            'count': len(serializer.data),
+            'user_type': request.user.user_type
+        })
+
+    @extend_schema(
+        summary='Get lesson attendance',
+        description='Get all attendance records for a specific lesson',
+        parameters=[
+            OpenApiParameter(name='detailed', description='Include full student details', required=False, type=bool)
+        ]
+    )
+    @action(detail=False, methods=['get'], url_path='by-lesson/(?P<lesson_id>[^/.]+)')
+    def by_lesson(self, request, lesson_id=None):
+        """Get attendance for specific lesson with optional detail level"""
+        detailed = request.query_params.get('detailed', 'false').lower() == 'true'
+        queryset = self.get_queryset().filter(lesson_id=lesson_id)
+        
+        if not detailed and request.user.user_type == 'teacher':
+            # Optimized response for teacher roster view
+            roster_data = queryset.values(
+                'student__id',
+                'student__first_name',
+                'student__last_name',
+                'attendance'
+            )
+            return Response({
+                'lesson_id': lesson_id,
+                'attendance_roster': list(roster_data),
+                'count': len(roster_data)
+            })
+        
+        serializer = self.get_serializer(queryset, many=True)
+        return Response({
+            'lesson_id': lesson_id,
+            'attendance_records': serializer.data,
+            'count': len(serializer.data)
+        })
+
+    @extend_schema(
+        request=BulkAttendanceSerializer,
+        responses={201: OpenApiTypes.OBJECT}
+    )
+    @action(detail=False, methods=['post'], url_path='bulk')
+    def bulk_create(self, request):
+        """Create multiple attendance records at once"""
+        if request.user.user_type != 'teacher':
+            return Response(
+                {'error': 'Only teachers can record attendance'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        serializer = BulkAttendanceSerializer(data=request.data, context={'request': request})
+        serializer.is_valid(raise_exception=True)
+        result = serializer.save()
+        return Response(result, status=status.HTTP_201_CREATED)
+
+    @extend_schema(
+        responses={
+            200: {
+                "type": "object",
+                "properties": {
+                    "course_id": {"type": "integer"},
+                    "overall_stats": {
+                        "type": "object",
+                        "properties": {
+                            "total_lessons": {"type": "integer"},
+                            "present_count": {"type": "integer"},
+                            "absent_count": {"type": "integer"},
+                            "attendance_rate": {"type": "number"}
+                        }
+                    },
+                    "student_stats": {"type": "array"}
+                }
+            }
+        }
+    )
+    @action(detail=False, methods=['get'], url_path='stats/(?P<course_id>[^/.]+)')
+    def course_stats(self, request, course_id=None):
+        """Get detailed attendance statistics for a course"""
+        if request.user.user_type != 'teacher':
+            return Response(
+                {'error': 'Only teachers can view attendance statistics'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        from django.db.models import Count, Q, F, ExpressionWrapper, FloatField
+        from django.db.models.functions import Coalesce
+
+        # Get base queryset
+        queryset = self.get_queryset().filter(course_id=course_id)
+        
+        # Overall statistics
+        total_lessons = Lesson.objects.filter(
+            course_id=course_id,
+            status__in=['completed', 'in_progress']
+        ).count()
+        
+        present_count = queryset.filter(attendance='present').count()
+        absent_count = queryset.filter(attendance='absent').count()
+        
+        # Student-level statistics
+        student_stats = queryset.values(
+            'student__id',
+            'student__first_name',
+            'student__last_name'
+        ).annotate(
+            total_attended=Count('id', filter=Q(attendance='present')),
+            attendance_rate=ExpressionWrapper(
+                Coalesce(
+                    Count('id', filter=Q(attendance='present')) * 100.0 / 
+                    F('total_lessons'),
+                    0
+                ),
+                output_field=FloatField()
+            )
+        ).order_by('-attendance_rate', 'student__last_name')
+        
+        return Response({
+            'course_id': course_id,
+            'overall_stats': {
+                'total_lessons': total_lessons,
+                'present_count': present_count,
+                'absent_count': absent_count,
+                'attendance_rate': round((present_count / (present_count + absent_count) * 100, 2)) if (present_count + absent_count) > 0 else 0
+            },
+            'student_stats': list(student_stats)
+        })
+
+    def get_serializer_context(self):
+        """Add request and view action to serializer context"""
+        context = super().get_serializer_context()
+        context.update({
+            'request': self.request,
+            'view': self
+        })
+        return context
