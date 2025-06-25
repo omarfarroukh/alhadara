@@ -186,9 +186,11 @@ class TeacherScheduleSlotSerializer(ScheduleSlotSerializer):
     """Serializer for teacher's schedule slots with enrolled students"""
     enrolled_students = serializers.SerializerMethodField()
     enrolled_count = serializers.SerializerMethodField()
+    course_progress = serializers.SerializerMethodField()
+    lessons_count = serializers.SerializerMethodField()
     
     class Meta(ScheduleSlotSerializer.Meta):
-        fields = list(ScheduleSlotSerializer.Meta.fields) + ['enrolled_students', 'enrolled_count']
+        fields = list(ScheduleSlotSerializer.Meta.fields) + ['enrolled_students', 'enrolled_count', 'course_progress', 'lessons_count']
     
     def get_enrolled_students(self, obj):
         """Get list of enrolled students for this schedule slot"""
@@ -222,6 +224,18 @@ class TeacherScheduleSlotSerializer(ScheduleSlotSerializer):
     def get_enrolled_count(self, obj):
         """Get count of enrolled students for this schedule slot"""
         return obj.enrollments.filter(status__in=['pending', 'active']).count()
+
+    def get_course_progress(self, obj):
+        lessons = obj.lessons_in_lessons_app.filter(status__in=['in_progress', 'completed'])
+        total_lesson_hours = sum(l.duration_hours for l in lessons)
+        course_hours = obj.course.duration
+        if course_hours > 0:
+            return round(min((total_lesson_hours / course_hours) * 100, 100), 2)
+        return 0.0
+
+    def get_lessons_count(self, obj):
+        # Only count lessons for this schedule slot
+        return obj.lessons_in_lessons_app.count()
 
 class BookingSerializer(serializers.ModelSerializer):
     hall_name = serializers.ReadOnlyField(source='hall.name')
@@ -338,11 +352,26 @@ class BaseEnrollmentSerializer(serializers.ModelSerializer):
         return obj.course.price - obj.amount_paid
 
 class StudentEnrollmentSerializer(BaseEnrollmentSerializer):
+    course_progress = serializers.SerializerMethodField()
+    lessons_count = serializers.SerializerMethodField()
     class Meta(BaseEnrollmentSerializer.Meta):
         read_only_fields = BaseEnrollmentSerializer.Meta.read_only_fields + (
             'first_name', 'middle_name', 'last_name', 'phone', 'is_guest',
-            'payment_method'
+            'payment_method', 'course_progress', 'lessons_count'
         )
+        fields = BaseEnrollmentSerializer.Meta.fields + ('course_progress', 'lessons_count')
+
+    def get_course_progress(self, obj):
+        # obj is Enrollment
+        lessons = Lesson.objects.filter(schedule_slot=obj.schedule_slot, course=obj.course, status__in=['in_progress', 'completed'])
+        total_lesson_hours = sum(l.duration_hours for l in lessons)
+        course_hours = obj.course.duration
+        if course_hours > 0:
+            return round(min((total_lesson_hours / course_hours) * 100, 100), 2)
+        return 0.0
+
+    def get_lessons_count(self, obj):
+        return Lesson.objects.filter(schedule_slot=obj.schedule_slot, course=obj.course).count()
 
     def validate(self, data):
         data = super().validate(data)

@@ -3,7 +3,7 @@ from core.models import Interest, StudyField
 from django.db.models import Q
 from django.core.validators import MinValueValidator
 from decimal import Decimal
-from datetime import date, datetime, timedelta,time
+from datetime import date, datetime, timedelta
 from django.core.exceptions import ValidationError
 from django.core.validators import FileExtensionValidator
 import time
@@ -832,7 +832,6 @@ class Enrollment(models.Model):
         self.full_clean()
         self.update_status()  # Update status before saving
         super().save(*args, **kwargs)
-        
 class Lesson(models.Model):
     """
     Model for lessons within courses
