@@ -490,6 +490,13 @@ class ScheduleSlotViewSet(viewsets.ModelViewSet):
     @extend_schema(
         parameters=[
             OpenApiParameter(
+                name='id',
+                type=OpenApiTypes.INT,
+                location=OpenApiParameter.QUERY,
+                description='Optional schedule slot id to filter for a single slot',
+                required=False
+            ),
+            OpenApiParameter(
                 name='upcoming_only',
                 type=OpenApiTypes.BOOL,
                 location=OpenApiParameter.QUERY,
@@ -501,39 +508,40 @@ class ScheduleSlotViewSet(viewsets.ModelViewSet):
     )
     @action(detail=False, methods=['get'], permission_classes=[permissions.IsAuthenticated])
     def my_slots(self, request):
-        """Get schedule slots associated with the current teacher"""
+        """Get schedule slots associated with the current teacher. If 'id' query param is provided, return only that slot."""
         if request.user.user_type != 'teacher':
             return Response(
                 {'error': 'This endpoint is only available for teachers'},
                 status=status.HTTP_403_FORBIDDEN
             )
-        
-        # Get teacher's schedule slots with optimized queries
+        slot_id = request.query_params.get('id')
         queryset = ScheduleSlot.objects.filter(
             teacher=request.user
         ).select_related('course', 'hall').prefetch_related(
             'enrollments__student'
         )
-        
         # Apply filters
         upcoming_only = request.query_params.get('upcoming_only', 'true').lower() == 'true'
-        
         if upcoming_only:
             from django.utils import timezone
             today = timezone.now().date()
             queryset = queryset.filter(
                 Q(valid_until__gte=today) | Q(valid_until__isnull=True)
             )
-        
+        # Filter by id if provided
+        if slot_id:
+            slot = queryset.filter(id=slot_id).first()
+            if not slot:
+                return Response({'detail': 'Not found or not allowed.'}, status=404)
+            serializer = TeacherScheduleSlotSerializer(slot)
+            return Response(serializer.data)
         # Apply ordering
         queryset = queryset.order_by('start_time', 'valid_from')
-        
         if not queryset.exists():
             return Response(
                 {'message': 'No schedule slots found for you'},
                 status=status.HTTP_200_OK
             )
-        
         serializer = TeacherScheduleSlotSerializer(queryset, many=True)
         return Response(serializer.data)
 
