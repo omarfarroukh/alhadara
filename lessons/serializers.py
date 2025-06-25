@@ -1,5 +1,6 @@
 from rest_framework import serializers
 from .models import Lesson, Homework, Attendance
+from courses.models import Enrollment
 from datetime import date
 from django.contrib.auth import get_user_model
 User = get_user_model()
@@ -11,13 +12,42 @@ class LessonSerializer(serializers.ModelSerializer):
             'id', 'title', 'notes', 'file', 'link', 'course', 'schedule_slot',
             'lesson_order', 'lesson_date', 'status', 'created_at', 'updated_at'
         ]
-        read_only_fields = ['id', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'created_at','lesson_order', 'updated_at']
 
     def validate(self, data):
         schedule_slot = data.get('schedule_slot') or getattr(self.instance, 'schedule_slot', None)
+        lesson_date = data.get('lesson_date') or getattr(self.instance, 'lesson_date', None)
+        lesson_order = data.get('lesson_order') or getattr(self.instance, 'lesson_order', None)
+        # Validate slot date range
+        if schedule_slot and lesson_date:
+            if schedule_slot.valid_from and lesson_date < schedule_slot.valid_from:
+                raise serializers.ValidationError('Lesson date cannot be before the schedule slot start date.')
+            if schedule_slot.valid_until and lesson_date > schedule_slot.valid_until:
+                raise serializers.ValidationError('Lesson date cannot be after the schedule slot end date.')
+        # Validate lesson order
+        if lesson_order and lesson_order > 1 and schedule_slot and lesson_date:
+            from .models import Lesson
+            prev_lesson = Lesson.objects.filter(
+                course=data.get('course') or getattr(self.instance, 'course', None),
+                schedule_slot=schedule_slot,
+                lesson_order=lesson_order-1
+            ).first()
+            if prev_lesson and lesson_date <= prev_lesson.lesson_date:
+                raise serializers.ValidationError(f'Lesson {lesson_order} date must be after lesson {lesson_order-1} date.')
+        # Existing slot ended check
         if schedule_slot and schedule_slot.valid_until and schedule_slot.valid_until < date.today():
             raise serializers.ValidationError('Cannot create a lesson for a schedule slot that has ended.')
         return data
+
+    def create(self, validated_data):
+        # Automatically set lesson_order if not provided
+        course = validated_data.get('course')
+        schedule_slot = validated_data.get('schedule_slot')
+        if 'lesson_order' not in validated_data or validated_data.get('lesson_order') is None:
+            from .models import Lesson
+            last_lesson = Lesson.objects.filter(course=course, schedule_slot=schedule_slot).order_by('-lesson_order').first()
+            validated_data['lesson_order'] = (last_lesson.lesson_order + 1) if last_lesson else 1
+        return super().create(validated_data)
 
 class HomeworkSerializer(serializers.ModelSerializer):
     teacher = serializers.ReadOnlyField(source='teacher.id')
@@ -33,24 +63,32 @@ class HomeworkSerializer(serializers.ModelSerializer):
 
     def validate(self, data):
         lesson = data.get('lesson') or getattr(self.instance, 'lesson', None)
+        deadline = data.get('deadline') or getattr(self.instance, 'deadline', None)
+        if lesson and deadline:
+            if deadline.date() <= lesson.lesson_date:
+                raise serializers.ValidationError('Homework deadline must be at least one day after the lesson date.')
         if lesson and lesson.status in ['scheduled', 'cancelled']:
             raise serializers.ValidationError('Cannot assign homework to a lesson that is scheduled or cancelled.')
         return data
 
 class AttendanceSerializer(serializers.ModelSerializer):
-    student_name = serializers.ReadOnlyField(source='student.get_full_name')
+    enrollment = serializers.PrimaryKeyRelatedField(queryset=Enrollment.objects.all(), required=True)
+    student_name = serializers.SerializerMethodField()
     lesson_title = serializers.ReadOnlyField(source='lesson.title')
     class Meta:
         model = Attendance
         fields = [
-            'id', 'student', 'student_name', 'lesson', 'lesson_title',
+            'id', 'enrollment', 'student_name', 'lesson', 'lesson_title',
             'teacher', 'attendance', 'recorded_at', 'updated_at'
         ]
         read_only_fields = ['id', 'recorded_at', 'updated_at', 'student_name', 'lesson_title']
 
+    def get_student_name(self, obj):
+        return obj.enrollment.student.get_full_name() if obj.enrollment and obj.enrollment.student else None
+
     def validate(self, data):
         lesson = data.get('lesson') or getattr(self.instance, 'lesson', None)
-        if lesson and lesson.status not in ['in_progress', 'completed']:
+        if lesson and lesson.status not in ['scheduled', 'completed']:
             raise serializers.ValidationError('Can only record attendance for lessons that are in progress or completed.')
         return data
 
@@ -66,12 +104,16 @@ class LessonSummarySerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Lesson
-        fields = ['id', 'title', 'lesson_date', 'homework', 'attended', 'attendance_rate']
+        fields = ['id', 'title', 'lesson_date','lesson_order', 'status', 'homework', 'attended', 'attendance_rate']
 
     def get_attended(self, obj):
         user = self.context.get('request').user
         if hasattr(user, 'user_type') and user.user_type == 'student':
-            return obj.attendance_records_in_lessons_app.filter(student=user, attendance='present').exists()
+            # Find the enrollment for this user, course, and schedule_slot
+            enrollment = Enrollment.objects.filter(student=user, course=obj.course, schedule_slot=obj.schedule_slot).first()
+            if not enrollment:
+                return False
+            return obj.attendance_records_in_lessons_app.filter(enrollment=enrollment, attendance='present').exists()
         return None
 
     def get_attendance_rate(self, obj):

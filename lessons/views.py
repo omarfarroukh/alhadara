@@ -141,11 +141,11 @@ class AttendanceViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         user = self.request.user
-        qs = Attendance.objects.select_related('student', 'lesson', 'lesson__course', 'teacher')
+        qs = Attendance.objects.select_related('enrollment', 'lesson', 'lesson__course', 'teacher')
         if hasattr(user, 'user_type') and user.user_type == 'teacher':
             qs = qs.filter(lesson__schedule_slot__teacher=user)
         elif hasattr(user, 'user_type') and user.user_type == 'student':
-            qs = qs.filter(student=user)
+            qs = qs.filter(enrollment__student=user)
         elif hasattr(user, 'user_type') and user.user_type in ['admin', 'reception']:
             pass
         else:
@@ -165,11 +165,11 @@ class AttendanceViewSet(viewsets.ModelViewSet):
                         'items': {
                             'type': 'object',
                             'properties': {
-                                'student': {'type': 'integer'},
+                                'enrollment': {'type': 'integer'},
                                 'lesson': {'type': 'integer'},
                                 'attendance': {'type': 'string', 'enum': ['present', 'absent']},
                             },
-                            'required': ['student', 'lesson', 'attendance']
+                            'required': ['enrollment', 'lesson', 'attendance']
                         }
                     }
                 },
@@ -194,7 +194,7 @@ class AttendanceViewSet(viewsets.ModelViewSet):
             if serializer.is_valid():
                 # Use update_or_create to avoid duplicates
                 obj, _ = Attendance.objects.update_or_create(
-                    student_id=data['student'],
+                    enrollment_id=data['enrollment'],
                     lesson_id=data['lesson'],
                     defaults={
                         'teacher': request.user,

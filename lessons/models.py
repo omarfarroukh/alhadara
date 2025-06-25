@@ -36,9 +36,7 @@ class Lesson(models.Model):
     # Status
     STATUS_CHOICES = [
         ('scheduled', 'Scheduled'),
-        ('in_progress', 'In Progress'),
         ('completed', 'Completed'),
-        ('cancelled', 'Cancelled'),
     ]
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='Scheduled')
     
@@ -163,7 +161,7 @@ class Attendance(models.Model):
     ]
     
     # Relationships
-    student = models.ForeignKey(User, on_delete=models.CASCADE, related_name='attendance_records_in_lessons_app')
+    enrollment = models.ForeignKey('courses.Enrollment', on_delete=models.CASCADE, related_name='attendance_records_in_lessons_app', null=True, blank=True)
     lesson = models.ForeignKey(Lesson, on_delete=models.CASCADE, related_name='attendance_records_in_lessons_app')
     teacher = models.ForeignKey(
         User, 
@@ -180,15 +178,15 @@ class Attendance(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
     
     class Meta:
-        unique_together = ['student', 'lesson']
+        unique_together = ['enrollment', 'lesson']
         ordering = ['-recorded_at']
     
     def __str__(self):
-        return f"{self.student.get_full_name()} - {self.lesson.title} - {self.get_attendance_display()}"
+        return f"{self.enrollment} - {self.lesson.title} - {self.get_attendance_display()}"
 
     @property
     def student_name(self):
-        return self.student.get_full_name() if self.student else None
+        return self.enrollment.student.get_full_name() if self.enrollment and self.enrollment.student else None
 
     @property
     def lesson_title(self):
