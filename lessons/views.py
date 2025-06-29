@@ -5,7 +5,7 @@ from rest_framework.response import Response
 from .models import Lesson, Homework, Attendance
 from .serializers import LessonSerializer, HomeworkSerializer, AttendanceSerializer, LessonSummarySerializer
 from django.db.models import Q
-from core.permissions import IsTeacher, IsStudent, IsAdminOrReception
+from core.permissions import IsTeacher, IsStudent, IsAdminOrReception,IsReception
 from django.contrib.auth import get_user_model
 from drf_spectacular.utils import extend_schema, OpenApiParameter
 from drf_spectacular.types import OpenApiTypes
@@ -14,8 +14,12 @@ User = get_user_model()
 
 class LessonViewSet(viewsets.ModelViewSet):
     serializer_class = LessonSerializer
-    permission_classes = [permissions.IsAuthenticated]
 
+    def get_permissions(self):
+        if self.action in ['create', 'update', 'partial_update', 'destroy','bulk']:
+            return [IsTeacher()]
+        return [permissions.IsAuthenticated()]
+    
     @extend_schema(
         parameters=[
             OpenApiParameter(
@@ -89,8 +93,12 @@ class LessonViewSet(viewsets.ModelViewSet):
 
 class HomeworkViewSet(viewsets.ModelViewSet):
     serializer_class = HomeworkSerializer
-    permission_classes = [permissions.IsAuthenticated]
-
+    
+    def get_permissions(self):
+        if self.action in ['create', 'update', 'partial_update', 'destroy','bulk']:
+            return [IsTeacher()]
+        return [permissions.IsAuthenticated()]
+    
     @extend_schema(
         parameters=[
             OpenApiParameter(
@@ -137,8 +145,12 @@ class HomeworkViewSet(viewsets.ModelViewSet):
 
 class AttendanceViewSet(viewsets.ModelViewSet):
     serializer_class = AttendanceSerializer
-    permission_classes = [permissions.IsAuthenticated]
 
+    def get_permissions(self):
+        if self.action in ['create', 'update', 'partial_update', 'destroy','bulk','bulk_create']:
+            return [IsTeacher()]
+        return [permissions.IsAuthenticated()]
+    
     def get_queryset(self):
         user = self.request.user
         qs = Attendance.objects.select_related('enrollment', 'lesson', 'lesson__course', 'teacher')

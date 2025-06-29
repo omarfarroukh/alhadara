@@ -1,68 +1,67 @@
-version: '3.9'
+version: '3.8'
 
 services:
-  db:
-    image: postgres:15
-    environment:
-      POSTGRES_DB: hadaradocker
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: yasser
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    restart: always
-
-  redis:
-    image: redis:latest
-    restart: always
-
-  web:
+  app:
     build: .
-    command: sh -c "python manage.py migrate && python manage.py collectstatic --noinput && gunicorn alhadara.wsgi:application --bind 0.0.0.0:8000"
+    image: alhadara-app
+    command: >
+      sh -c "python manage.py migrate &&
+             uvicorn alhadara.asgi:application --host 0.0.0.0 --port 8000 --workers 4"
+    environment:
+      - DJANGO_SETTINGS_MODULE=alhadara.settings
+      - DEBUG=True
+      - DEVELOPMENT=True
+      - CELERY_BROKER_URL=${LOCAL_REDIS_URL}/0
+      - DATABASE_URL=postgres://${LOCAL_DB_USER}:${LOCAL_DB_PASSWORD}@host.docker.internal:${LOCAL_DB_PORT}/${LOCAL_DB_NAME}
     volumes:
       - .:/app
-      - static_volume:/app/staticfiles
-      - media_volume:/app/media
     ports:
       - "8000:8000"
-    env_file:
-      - .env
-    depends_on:
-      - db
-      - redis
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
 
   celery:
-    build: .
-    command: celery -A alhadara worker -l info
+    image: alhadara-app
+    command: celery -A alhadara worker --loglevel=info
+    environment:
+      - DJANGO_SETTINGS_MODULE=alhadara.settings
+      - DEBUG=True
+      - DEVELOPMENT=True
+      - CELERY_BROKER_URL=${LOCAL_REDIS_URL}/0
+      - DATABASE_URL=postgres://${LOCAL_DB_USER}:${LOCAL_DB_PASSWORD}@host.docker.internal:${LOCAL_DB_PORT}/${LOCAL_DB_NAME}
     volumes:
       - .:/app
-    env_file:
-      - .env
     depends_on:
-      - db
-      - redis
+      - app
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
 
   celery-beat:
-    build: .
-    command: celery -A alhadara beat -l info --scheduler django_celery_beat.schedulers:DatabaseScheduler
+    image: alhadara-app
+    command: celery -A alhadara beat --loglevel=info
+    environment:
+      - DJANGO_SETTINGS_MODULE=alhadara.settings
+      - DEBUG=True
+      - DEVELOPMENT=True
+      - CELERY_BROKER_URL=${LOCAL_REDIS_URL}/0
+      - DATABASE_URL=postgres://${LOCAL_DB_USER}:${LOCAL_DB_PASSWORD}@host.docker.internal:${LOCAL_DB_PORT}/${LOCAL_DB_NAME}
     volumes:
       - .:/app
-    env_file:
-      - .env
     depends_on:
-      - db
-      - redis
+      - app
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
 
   flower:
-    build: .
+    image: alhadara-app
     command: celery -A alhadara flower --port=5555
+    environment:
+      - DJANGO_SETTINGS_MODULE=alhadara.settings
+      - DEBUG=True
+      - CELERY_BROKER_URL=${LOCAL_REDIS_URL}/0
     ports:
       - "5555:5555"
-    env_file:
-      - .env
     depends_on:
-      - redis
-
-volumes:
-  postgres_data:
-  static_volume:
-  media_volume: 
+      - celery
+    extra_hosts:
+      - "host.docker.internal:host-gateway"

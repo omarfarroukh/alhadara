@@ -121,7 +121,8 @@ class ScheduleSlotSerializer(serializers.ModelSerializer):
     hall_name = serializers.ReadOnlyField(source='hall.name')
     teacher_name = serializers.SerializerMethodField()
     duration_hours = serializers.SerializerMethodField()
-    
+    remaining_seats = serializers.SerializerMethodField()
+
     class Meta:
         model = ScheduleSlot
         fields = (
@@ -139,6 +140,21 @@ class ScheduleSlotSerializer(serializers.ModelSerializer):
         if obj.teacher:
             return obj.teacher.get_full_name()
         return None
+    
+    def get_remaining_seats(self, obj):
+        """Calculate remaining available seats in the schedule slot"""
+        if not obj.course:
+            return None
+            
+        # Count active enrollments for this schedule slot
+        active_enrollments = Enrollment.objects.filter(
+            schedule_slot=obj,
+            status__in=['pending', 'active']
+        ).count()
+        
+        remaining = obj.course.max_students - active_enrollments
+        return max(remaining, 0)  # Ensure we don't return negative numbers
+
     
     def get_duration_hours(self, obj):
         """Calculate duration in hours including minutes"""
@@ -214,11 +230,7 @@ class TeacherScheduleSlotSerializer(ScheduleSlotSerializer):
             students.append({
                 'id': enrollment.id,
                 'name': student_name,
-                'phone': enrollment.phone or (enrollment.student.phone if enrollment.student else None),
-                'status': enrollment.status,
-                'payment_status': enrollment.payment_status,
                 'is_guest': enrollment.is_guest,
-                'enrollment_date': enrollment.enrollment_date
             })
         
         return students
@@ -358,17 +370,29 @@ class BaseEnrollmentSerializer(serializers.ModelSerializer):
         return obj.student.get_full_name() if obj.student else None
 
     def get_schedule_slot_display(self, obj):
-        if obj.schedule_slot:
-            days = ", ".join(obj.schedule_slot.days_of_week)
-            valid_from = obj.schedule_slot.valid_from.strftime('%Y-%m-%d') if obj.schedule_slot.valid_from else "N/A"
-            valid_until = obj.schedule_slot.valid_until.strftime('%Y-%m-%d') if obj.schedule_slot.valid_until else "N/A"
-            return (
-                f"{obj.schedule_slot.course.title} - {days} "
-                f"{obj.schedule_slot.start_time.strftime('%H:%M')}-"
-                f"{obj.schedule_slot.end_time.strftime('%H:%M')} "
-                f"(From {valid_from} to {valid_until})"
-            )
-        return None
+        if not obj.schedule_slot:
+            return None
+        return {
+            'course_title': obj.schedule_slot.course.title if obj.schedule_slot.course else None,
+            'days_of_week': obj.schedule_slot.days_of_week,
+            'days_display': ", ".join(obj.schedule_slot.days_of_week),
+            'time_range': {
+                'start': obj.schedule_slot.start_time.strftime('%H:%M') if obj.schedule_slot.start_time else None,
+                'end': obj.schedule_slot.end_time.strftime('%H:%M') if obj.schedule_slot.end_time else None,
+                'display': (
+                    f"{obj.schedule_slot.start_time.strftime('%H:%M')}-"
+                    f"{obj.schedule_slot.end_time.strftime('%H:%M')}"
+                ) if obj.schedule_slot.start_time and obj.schedule_slot.end_time else None
+            },
+            'validity_period': {
+                'start': obj.schedule_slot.valid_from.strftime('%Y-%m-%d') if obj.schedule_slot.valid_from else None,
+                'end': obj.schedule_slot.valid_until.strftime('%Y-%m-%d') if obj.schedule_slot.valid_until else None,
+                'display': (
+                    f"From {obj.schedule_slot.valid_from.strftime('%Y-%m-%d')} to "
+                    f"{obj.schedule_slot.valid_until.strftime('%Y-%m-%d')}"
+                ) if obj.schedule_slot.valid_from and obj.schedule_slot.valid_until else None
+            }
+        }
 
     def get_remaining_balance(self, obj):
         return obj.course.price - obj.amount_paid

@@ -46,7 +46,6 @@ class Lesson(models.Model):
     
     class Meta:
         ordering = ['lesson_date', 'lesson_order']
-        unique_together = ['course', 'lesson_order']
     
     def __str__(self):
         return f"{self.course.title} - Lesson {self.lesson_order}: {self.title}"

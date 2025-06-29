@@ -16,27 +16,39 @@ class LessonSerializer(serializers.ModelSerializer):
 
     def validate(self, data):
         schedule_slot = data.get('schedule_slot') or getattr(self.instance, 'schedule_slot', None)
+        course = data.get('course') or getattr(self.instance, 'course', None)
         lesson_date = data.get('lesson_date') or getattr(self.instance, 'lesson_date', None)
         lesson_order = data.get('lesson_order') or getattr(self.instance, 'lesson_order', None)
+        
+        # Validate that schedule_slot belongs to the course
+        if schedule_slot and course:
+            if schedule_slot.course != course:
+                raise serializers.ValidationError(
+                    {'schedule_slot': 'The selected schedule slot does not belong to the specified course.'}
+                )
+        
         # Validate slot date range
         if schedule_slot and lesson_date:
             if schedule_slot.valid_from and lesson_date < schedule_slot.valid_from:
                 raise serializers.ValidationError('Lesson date cannot be before the schedule slot start date.')
             if schedule_slot.valid_until and lesson_date > schedule_slot.valid_until:
                 raise serializers.ValidationError('Lesson date cannot be after the schedule slot end date.')
+        
         # Validate lesson order
         if lesson_order and lesson_order > 1 and schedule_slot and lesson_date:
             from .models import Lesson
             prev_lesson = Lesson.objects.filter(
-                course=data.get('course') or getattr(self.instance, 'course', None),
+                course=course,
                 schedule_slot=schedule_slot,
                 lesson_order=lesson_order-1
             ).first()
             if prev_lesson and lesson_date <= prev_lesson.lesson_date:
                 raise serializers.ValidationError(f'Lesson {lesson_order} date must be after lesson {lesson_order-1} date.')
+        
         # Existing slot ended check
         if schedule_slot and schedule_slot.valid_until and schedule_slot.valid_until < date.today():
             raise serializers.ValidationError('Cannot create a lesson for a schedule slot that has ended.')
+        
         return data
 
     def create(self, validated_data):
@@ -44,11 +56,11 @@ class LessonSerializer(serializers.ModelSerializer):
         course = validated_data.get('course')
         schedule_slot = validated_data.get('schedule_slot')
         if 'lesson_order' not in validated_data or validated_data.get('lesson_order') is None:
-            from .models import Lesson
-            last_lesson = Lesson.objects.filter(course=course, schedule_slot=schedule_slot).order_by('-lesson_order').first()
+            last_lesson = Lesson.objects.filter(schedule_slot=schedule_slot).order_by('-lesson_order').first()
             validated_data['lesson_order'] = (last_lesson.lesson_order + 1) if last_lesson else 1
         return super().create(validated_data)
-
+    
+    
 class HomeworkSerializer(serializers.ModelSerializer):
     teacher = serializers.ReadOnlyField(source='teacher.id')
     course = serializers.ReadOnlyField(source='course.id')
