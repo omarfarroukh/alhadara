@@ -6,14 +6,20 @@ from django.contrib.auth import get_user_model
 User = get_user_model()
 
 class LessonSerializer(serializers.ModelSerializer):
+    has_homework = serializers.SerializerMethodField()
+
     class Meta:
         model = Lesson
         fields = [
             'id', 'title', 'notes', 'file', 'link', 'course', 'schedule_slot',
             'lesson_order', 'lesson_date', 'status', 'created_at', 'updated_at'
+            ,'has_homework'
         ]
-        read_only_fields = ['id', 'created_at','lesson_order', 'updated_at']
+        read_only_fields = ['id', 'created_at','lesson_order', 'updated_at','has_homework']
 
+    def get_has_homework(self, obj):
+        return obj.homework_assignments_in_lessons_app.exists()
+    
     def validate(self, data):
         schedule_slot = data.get('schedule_slot') or getattr(self.instance, 'schedule_slot', None)
         course = data.get('course') or getattr(self.instance, 'course', None)
@@ -79,8 +85,6 @@ class HomeworkSerializer(serializers.ModelSerializer):
         if lesson and deadline:
             if deadline.date() <= lesson.lesson_date:
                 raise serializers.ValidationError('Homework deadline must be at least one day after the lesson date.')
-        if lesson and lesson.status in ['scheduled', 'cancelled']:
-            raise serializers.ValidationError('Cannot assign homework to a lesson that is scheduled or cancelled.')
         return data
 
 class AttendanceSerializer(serializers.ModelSerializer):
