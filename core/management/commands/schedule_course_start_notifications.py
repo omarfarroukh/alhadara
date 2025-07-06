@@ -1,8 +1,7 @@
 # core/management/commands/schedule_course_start_notifications.py
-from django.core.management.base import BaseCommand, CommandError
+from django.core.management.base import BaseCommand
 from django_rq import get_scheduler
-from datetime import timedelta
-from core.tasks import send_course_start_notifications_task
+from core.tasks import send_course_reminders_task
 
 JOB_ID = "daily-course-start-notify"      # one canonical id
 DEFAULT_CRON = "0 0 * * *"               # midnight UTC
@@ -66,7 +65,7 @@ class Command(BaseCommand):
 
         scheduler.cron(
             cron,
-            func=send_course_start_notifications_task,
+            func=send_course_reminders_task,
             id=JOB_ID,
             queue_name="default",
             repeat=None,          # infinite
