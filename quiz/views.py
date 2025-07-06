@@ -13,7 +13,7 @@ from .serializers import (
     QuizBulkSubmitSerializer, QuizSerializer, QuizDetailSerializer, QuizCreateSerializer,
     QuestionCreateSerializer, QuizAttemptSerializer, QuizAnswerSerializer,
     QuizAnswerSubmitSerializer, QuizStartSerializer, QuizSubmitSerializer,
-    QuizResultSerializer
+    QuizResultSerializer, QuestionSerializer
 )
 from core.permissions import IsTeacherOrReceptionOrAdmin
 
@@ -259,9 +259,13 @@ class QuizViewSet(viewsets.ModelViewSet):
 class QuestionViewSet(viewsets.ModelViewSet):
     """ViewSet for managing quiz questions"""
     queryset = Question.objects.all().select_related('quiz')
-    serializer_class = QuestionCreateSerializer
     filter_backends = [DjangoFilterBackend]
     filterset_fields = ['quiz', 'question_type']
+    
+    def get_serializer_class(self):
+        if self.action in ['create', 'update', 'partial_update']:
+            return QuestionCreateSerializer
+        return QuestionSerializer
     
     def get_permissions(self):
         return [IsTeacherOrReceptionOrAdmin()]
@@ -275,7 +279,7 @@ class QuestionViewSet(viewsets.ModelViewSet):
             teaching_slot_ids = user.teaching_slots.values_list('course_id', flat=True)
             queryset = queryset.filter(quiz__course_id__in=teaching_slot_ids)
         
-        return queryset.prefetch_related('choices')
+        return queryset.prefetch_related('choices', 'related_lessons')
 
 class QuizAttemptViewSet(viewsets.ReadOnlyModelViewSet):
     """ViewSet for viewing quiz attempts"""
@@ -345,18 +349,18 @@ class QuizAnswerViewSet(viewsets.ModelViewSet):
             # Students can only see their own answers
             return QuizAnswer.objects.filter(attempt__user=user).select_related(
                 'attempt', 'question'
-            ).prefetch_related('selected_choices')
+            ).prefetch_related('selected_choices', 'question__related_lessons')
         elif user.user_type == 'teacher':
             # Teachers can see answers for quizzes they teach
             teaching_slot_ids = user.teaching_slots.values_list('course_id', flat=True)
             return QuizAnswer.objects.filter(
                 attempt__quiz__course_id__in=teaching_slot_ids
-            ).select_related('attempt', 'question', 'attempt__user').prefetch_related('selected_choices')
+            ).select_related('attempt', 'question', 'attempt__user').prefetch_related('selected_choices', 'question__related_lessons')
         else:
             # Admins/reception can see all answers
             return QuizAnswer.objects.all().select_related(
                 'attempt', 'question', 'attempt__user'
-            ).prefetch_related('selected_choices')
+            ).prefetch_related('selected_choices', 'question__related_lessons')
     
     @extend_schema(
         request={
@@ -410,10 +414,19 @@ class QuizAnswerViewSet(viewsets.ModelViewSet):
         attempt_id = serializer.validated_data['attempt_id']
         answers_data = serializer.validated_data['answers']
 
+        # Check for duplicate question orders
+        question_orders = [answer['question_order'] for answer in answers_data]
+        if len(question_orders) != len(set(question_orders)):
+            return Response(
+                {'error': 'Duplicate question orders found in answers. Each question can only be answered once.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
         # Prefetch attempt and question map
         attempt = QuizAttempt.objects.select_related('quiz').prefetch_related(
             'quiz__questions',
-            'quiz__questions__choices'
+            'quiz__questions__choices',
+            'quiz__questions__related_lessons'
         ).get(id=attempt_id)
         question_map = {q.order: q for q in attempt.quiz.questions.all()}
 
@@ -441,7 +454,24 @@ class QuizAnswerViewSet(viewsets.ModelViewSet):
             )
 
             if answer_serializer.is_valid():
-                answer = answer_serializer.save()
+                # Use update_or_create to handle potential duplicates
+                answer, created = QuizAnswer.objects.update_or_create(
+                    attempt=attempt,
+                    question=question,
+                    defaults={
+                        'text_answer': text_answer
+                    }
+                )
+                
+                # Set selected choices
+                if choice_orders:
+                    choices = question.choices.filter(order__in=choice_orders)
+                    answer.selected_choices.set(choices)
+                    answer.refresh_from_db()
+                
+                # Calculate points for auto-graded questions
+                answer.calculate_points()
+                
                 created_answers.append(answer)
             else:
                 errors.append({

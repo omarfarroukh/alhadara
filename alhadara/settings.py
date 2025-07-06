@@ -127,6 +127,8 @@ CLOUDINARY_STORAGE = {
     'API_KEY': os.environ.get('CLOUDINARY_API_KEY'),
     'API_SECRET': os.environ.get('CLOUDINARY_API_SECRET'),
     'SECURE': True,
+    'RESOURCE_TYPE': 'auto',  # or 'raw' for non-image files
+    'STATIC_IMAGES_EXTENSIONS': ['jpg', 'jpeg', 'png', 'gif', 'webp'],
     'MEDIA_TAG': 'media',
     'INVALID_VIDEO_ERROR_MESSAGE': 'Please upload a valid video file.',
     'EXCLUDE_DELETE_ORPHANED_MEDIA_PATHS': (),
@@ -158,7 +160,7 @@ else:
     # Production - use Cloudinary
     STORAGES = {
         'default': {
-            'BACKEND': 'cloudinary_storage.storage.MediaCloudinaryStorage',
+            'BACKEND': 'cloudinary_storage.storage.RawMediaCloudinaryStorage',
         },
         'staticfiles': {
             'BACKEND': 'cloudinary_storage.storage.StaticHashedCloudinaryStorage',

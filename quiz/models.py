@@ -114,6 +114,7 @@ class Question(models.Model):
     points = models.PositiveIntegerField(default=1, help_text="Points for this question")
     order = models.PositiveIntegerField(default=0, help_text="Question order in quiz")
     is_required = models.BooleanField(default=True)
+    related_lessons = models.ManyToManyField('lessons.Lesson', blank=True, related_name='related_questions', help_text="Lessons related to this question for revision feedback.")
     
     class Meta:
         ordering = ['order', 'id']

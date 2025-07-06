@@ -1,6 +1,7 @@
 from rest_framework import serializers
 from .models import Quiz, Question, Choice, QuizAttempt, QuizAnswer
 from courses.serializers import CourseSerializer, ScheduleSlotSerializer
+from lessons.models import Lesson
 
 class ChoiceSerializer(serializers.ModelSerializer):
     class Meta:
@@ -26,10 +27,14 @@ class ChoiceCreateSerializer(serializers.ModelSerializer):
 
 class QuestionSerializer(serializers.ModelSerializer):
     choices = ChoiceSerializer(many=True, read_only=True)
+    related_lessons = serializers.SerializerMethodField()
     
     class Meta:
         model = Question
-        fields = ['id', 'text', 'question_type', 'points', 'order', 'is_required', 'choices']
+        fields = ['id', 'text', 'question_type', 'points', 'order', 'is_required', 'choices', 'related_lessons']
+
+    def get_related_lessons(self, obj):
+        return [{'id': l.id, 'title': l.title} for l in obj.related_lessons.all()]
 
 class QuizSerializer(serializers.ModelSerializer):
     course = CourseSerializer(read_only=True)
@@ -101,10 +106,11 @@ class QuizCreateSerializer(serializers.ModelSerializer):
 class QuestionCreateSerializer(serializers.ModelSerializer):
     """Serializer for creating questions"""
     choices = ChoiceCreateSerializer(many=True, required=False)
+    related_lessons = serializers.PrimaryKeyRelatedField(queryset=Lesson.objects.all(), many=True, required=False)
     
     class Meta:
         model = Question
-        fields = ['quiz', 'text', 'question_type', 'points', 'order', 'is_required', 'choices']
+        fields = ['quiz', 'text', 'question_type', 'points', 'order', 'is_required', 'choices', 'related_lessons']
     
     def validate(self, data):
         """Validate question data"""
@@ -139,22 +145,24 @@ class QuestionCreateSerializer(serializers.ModelSerializer):
     
     def create(self, validated_data):
         choices_data = validated_data.pop('choices', [])
+        related_lessons = validated_data.pop('related_lessons', [])
         question = Question.objects.create(**validated_data)
-        
+        if related_lessons:
+            question.related_lessons.set(related_lessons)
         for choice_data in choices_data:
             Choice.objects.create(question=question, **choice_data)
-        
         return question
     
     def update(self, instance, validated_data):
         choices_data = validated_data.pop('choices', [])
+        related_lessons = validated_data.pop('related_lessons', None)
         instance = super().update(instance, validated_data)
-        
+        if related_lessons is not None:
+            instance.related_lessons.set(related_lessons)
         # Update choices
         instance.choices.all().delete()
         for choice_data in choices_data:
             Choice.objects.create(question=instance, **choice_data)
-        
         return instance
 
 class QuizAttemptSerializer(serializers.ModelSerializer):
@@ -191,14 +199,25 @@ class QuizAnswerSerializer(serializers.ModelSerializer):
     question_text = serializers.ReadOnlyField(source='question.text')
     question_type = serializers.ReadOnlyField(source='question.question_type')
     selected_choices = ChoiceSerializer(many=True, read_only=True)
+    revision_note = serializers.SerializerMethodField()
     
     class Meta:
         model = QuizAnswer
         fields = [
             'id', 'attempt', 'question', 'question_text', 'question_type',
-            'selected_choices', 'text_answer', 'points_earned', 'is_correct', 'answered_at'
+            'selected_choices', 'text_answer', 'points_earned', 'is_correct', 'answered_at', 'revision_note'
         ]
         read_only_fields = ['attempt', 'points_earned', 'is_correct', 'answered_at']
+
+    def get_revision_note(self, obj):
+        if obj.is_correct is False:
+            lessons = obj.question.related_lessons.all()
+            if lessons:
+                return {
+                    'message': 'Please revise the following lessons:',
+                    'lessons': [{'id': l.id, 'title': l.title} for l in lessons]
+                }
+        return None
 
 class QuizAnswerSubmitSerializer(serializers.ModelSerializer):
     """Serializer for submitting quiz answers"""

@@ -10,6 +10,8 @@ logger = logging.getLogger(__name__)
 User = get_user_model()
 from django.db.models.signals import post_save
 from django.dispatch import receiver
+from cloudinary_storage.storage import RawMediaCloudinaryStorage, MediaCloudinaryStorage
+
 
 # Create your models here.
 class Lesson(models.Model):
@@ -220,8 +222,8 @@ class ScheduleSlotNews(models.Model):
     type = models.CharField(max_length=20, choices=TYPE_CHOICES)
     title = models.CharField(max_length=255, blank=True)
     content = models.TextField(blank=True)
-    file = models.FileField(upload_to='news/files/', blank=True, null=True)
-    image = models.ImageField(upload_to='news/images/', blank=True, null=True)
+    file = models.FileField(upload_to='news/files/', blank=True, null=True,storage=RawMediaCloudinaryStorage())
+    image = models.ImageField(upload_to='news/images/', blank=True, null=True,storage=MediaCloudinaryStorage())
     related_homework = models.ForeignKey('lessons.Homework', on_delete=models.SET_NULL, null=True, blank=True)
     related_quiz = models.ForeignKey('quiz.Quiz', on_delete=models.SET_NULL, null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
