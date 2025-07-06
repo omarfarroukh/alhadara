@@ -5,28 +5,17 @@ from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from django.db.models import Q, Count, Avg
 from django_filters.rest_framework import DjangoFilterBackend
-from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiResponse
+from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiResponse,inline_serializer,OpenApiExample
 from drf_spectacular.types import OpenApiTypes
 
 from .models import Quiz, Question, Choice, QuizAttempt, QuizAnswer
 from .serializers import (
-    QuizSerializer, QuizDetailSerializer, QuizCreateSerializer,
+    QuizBulkSubmitSerializer, QuizSerializer, QuizDetailSerializer, QuizCreateSerializer,
     QuestionCreateSerializer, QuizAttemptSerializer, QuizAnswerSerializer,
     QuizAnswerSubmitSerializer, QuizStartSerializer, QuizSubmitSerializer,
     QuizResultSerializer
 )
-from core.permissions import IsTeacher, IsReception, IsAdmin
-
-class IsTeacherOrReceptionOrAdmin(permissions.BasePermission):
-    """
-    Allows access only to teacher, reception, or admin users.
-    """
-    def has_permission(self, request, view):
-        return bool(
-            request.user and 
-            request.user.is_authenticated and 
-            request.user.user_type in ['teacher', 'reception', 'admin']
-        )
+from core.permissions import IsTeacherOrReceptionOrAdmin
 
 class QuizViewSet(viewsets.ModelViewSet):
     """ViewSet for managing quizzes"""
@@ -340,10 +329,12 @@ class QuizAnswerViewSet(viewsets.ModelViewSet):
     def get_serializer_class(self):
         if self.action in ['create', 'update', 'partial_update']:
             return QuizAnswerSubmitSerializer
+        elif self.action == 'bulk_submit':
+            return QuizBulkSubmitSerializer
         return QuizAnswerSerializer
     
     def get_permissions(self):
-        if self.action in ['create', 'update', 'partial_update']:
+        if self.action in ['create', 'update', 'partial_update', 'bulk_submit']:
             return [permissions.IsAuthenticated()]
         return [IsTeacherOrReceptionOrAdmin()]
     
@@ -404,3 +395,69 @@ class QuizAnswerViewSet(viewsets.ModelViewSet):
         
         serializer = QuizAnswerSerializer(answer, context={'request': request})
         return Response(serializer.data)
+    
+    @extend_schema(
+        request=QuizBulkSubmitSerializer,
+        responses={201: QuizAnswerSerializer(many=True)},
+        description="Submit multiple quiz answers in bulk"
+    )
+    @action(detail=False, methods=['post'], url_path='bulk-submit')
+    def bulk_submit(self, request):
+        """Handle bulk submission of quiz answers"""
+        serializer = QuizBulkSubmitSerializer(data=request.data, context={'request': request})
+        serializer.is_valid(raise_exception=True)
+
+        attempt_id = serializer.validated_data['attempt_id']
+        answers_data = serializer.validated_data['answers']
+
+        # Prefetch attempt and question map
+        attempt = QuizAttempt.objects.select_related('quiz').prefetch_related(
+            'quiz__questions',
+            'quiz__questions__choices'
+        ).get(id=attempt_id)
+        question_map = {q.order: q for q in attempt.quiz.questions.all()}
+
+        created_answers = []
+        errors = []
+
+        for answer_data in answers_data:
+            question_order = answer_data['question_order']
+            question = question_map.get(question_order)
+            choice_orders = answer_data.get('choice_orders', [])
+            text_answer = answer_data.get('text_answer', '')
+
+            answer_serializer = QuizAnswerSubmitSerializer(
+                data={
+                    'attempt_id': attempt_id,
+                    'question_order': question_order,
+                    'choice_orders': choice_orders,
+                    'text_answer': text_answer
+                },
+                context={
+                    'request': request,
+                    '_attempt': attempt,
+                    '_question': question
+                }
+            )
+
+            if answer_serializer.is_valid():
+                answer = answer_serializer.save()
+                created_answers.append(answer)
+            else:
+                errors.append({
+                    'question_order': question_order,
+                    'errors': answer_serializer.errors
+                })
+
+        if errors:
+            return Response({'errors': errors}, status=status.HTTP_207_MULTI_STATUS)
+
+        # Finalize the attempt
+        attempt.status = 'completed'
+        attempt.calculate_score()
+        attempt.save()
+
+        return Response(
+            QuizAnswerSerializer(created_answers, many=True).data,
+            status=status.HTTP_201_CREATED
+        )

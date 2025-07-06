@@ -61,6 +61,7 @@ INSTALLED_APPS = [
     'djoser',
     'debug_toolbar',
     'django_ratelimit',
+    'django_rq',
     'core',
     'courses',
     'quiz',
@@ -215,10 +216,7 @@ if DEVELOPMENT:
             },
         }
     }
-    
-    CELERY_BROKER_URL = f"{REDIS_URL}/0"
-    CELERY_RESULT_BACKEND = f"{REDIS_URL}/0"
-    CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = True    
+     
 else:
     REDIS_URL = os.environ['REDIS_URL']
     CACHES = {
@@ -244,19 +242,27 @@ else:
             },
         }
     }
-    
-    CELERY_BROKER_URL = REDIS_URL + "/0"
-    CELERY_RESULT_BACKEND = REDIS_URL + "/0"
-    CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = True
 
+RQ_QUEUES = {
+    "default": {
+        "USE_REDIS_CACHE": "default",   
+        
+        "DEFAULT_TIMEOUT": None,         
+        "RESULT_TTL": 24 * 3600,        
+    },
+    "high": {
+        "USE_REDIS_CACHE": "default",
+        "DEFAULT_TIMEOUT": 600,
+    },
+    "low": {
+        "USE_REDIS_CACHE": "default",
+        "DEFAULT_TIMEOUT": 180,
+    },
+}
 
+RQ_SHOW_ADMIN_LINK = True          # link in Django‑admin sidebar
+RQ_IGNORE_QUEUES = {"failed"}      # hide huge failed queue in dashboard
 
-CELERY_BROKER_URL = REDIS_URL + "/0"  # Using database 0 for Celery
-CELERY_RESULT_BACKEND = REDIS_URL + "/0"
-CELERY_ACCEPT_CONTENT = ['json']
-CELERY_TASK_SERIALIZER = 'json'
-CELERY_RESULT_SERIALIZER = 'json'
-CELERY_TIMEZONE = 'UTC'
 
 # Password validation
 # https://docs.djangoproject.com/en/5.0/ref/settings/#auth-password-validators
@@ -363,7 +369,7 @@ DEFAULT_CHARSET = 'utf-8'
 # SimpleJWT settings
 SIMPLE_JWT = {
     'AUTH_HEADER_TYPES': ('JWT',),
-    'ACCESS_TOKEN_LIFETIME': timedelta(hours=1),
+    'ACCESS_TOKEN_LIFETIME': timedelta(days=1),
     'REFRESH_TOKEN_LIFETIME': timedelta(days=1),
     'TOKEN_OBTAIN_SERIALIZER': 'core.serializers.CustomTokenObtainPairSerializer',
     'ROTATE_REFRESH_TOKENS': True,

@@ -67,3 +67,15 @@ class IsAdmin(permissions.BasePermission):
     def has_permission(self, request, view):
         return bool(request.user and request.user.is_authenticated and 
                    (request.user.user_type == 'admin' or request.user.is_superuser))
+        
+        
+class IsTeacherOrReceptionOrAdmin(permissions.BasePermission):
+    """
+    Allows access only to teacher, reception, or admin users.
+    """
+    def has_permission(self, request, view):
+        return bool(
+            request.user and 
+            request.user.is_authenticated and 
+            request.user.user_type in ['teacher', 'reception', 'admin']
+        )

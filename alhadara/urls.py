@@ -3,6 +3,8 @@ from django.urls import path, include
 from django.conf import settings
 from django.conf.urls.static import static
 from drf_spectacular.views import SpectacularAPIView, SpectacularRedocView, SpectacularSwaggerView
+from django.urls import path, include
+
 
 urlpatterns = [
     path('admin/', admin.site.urls),
@@ -16,6 +18,7 @@ urlpatterns = [
     path('api/courses/', include('courses.urls')),
     path('api/quiz/', include('quiz.urls')),
     path('api/lessons/', include('lessons.urls')),
+    path('django-rq/', include('django_rq.urls')),
 ]
 
 if settings.DEBUG:

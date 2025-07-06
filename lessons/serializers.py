@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import Lesson, Homework, Attendance
+from .models import Lesson, Homework, Attendance, HomeworkGrade, ScheduleSlotNews
 from courses.models import Enrollment
 from datetime import date
 from django.contrib.auth import get_user_model
@@ -139,3 +139,38 @@ class LessonSummarySerializer(serializers.ModelSerializer):
             present = obj.attendance_records_in_lessons_app.filter(attendance='present').count()
             return round((present / total) * 100, 2) if total > 0 else 0.0
         return None
+
+class HomeworkGradeSerializer(serializers.ModelSerializer):
+    student_name = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = HomeworkGrade
+        fields = ['id', 'homework', 'enrollment', 'grade', 'comment', 'graded_by', 'graded_at', 'student_name']
+        read_only_fields = ['id', 'graded_by', 'graded_at', 'student_name', 'homework']
+    
+    def get_student_name(self, obj):
+        # Use the enrollment's student_name logic that already handles guest cases
+        if obj.enrollment:
+            if hasattr(obj.enrollment, 'is_guest') and obj.enrollment.is_guest:
+                return f"{obj.enrollment.first_name} {obj.enrollment.middle_name} {obj.enrollment.last_name}"
+            elif obj.enrollment.student:
+                return obj.enrollment.student.get_full_name()
+        return "Unknown Student"
+    
+    def validate(self, data):
+        homework = self.context.get('homework')
+        if homework and 'grade' in data:
+            if data['grade'] > homework.max_score:
+                raise serializers.ValidationError({
+                    'grade': f'Grade cannot exceed homework max score of {homework.max_score}'
+                })
+        return data
+
+class ScheduleSlotNewsSerializer(serializers.ModelSerializer):
+    file = serializers.FileField(required=False, allow_null=True)
+    image = serializers.ImageField(required=False, allow_null=True)
+    
+    class Meta:
+        model = ScheduleSlotNews
+        fields = '__all__'
+        read_only_fields = ['id', 'created_at', 'author']

@@ -33,7 +33,7 @@ import logging
 from django.db.models import Q
 from decimal import Decimal
 import time
-from .services import notify_deposit_request_created, notify_deposit_status_changed
+from .tasks import  notify_deposit_request_created_task,notify_deposit_status_changed_task
 
 logger = logging.getLogger(__name__)
 User = get_user_model()
@@ -412,7 +412,7 @@ class DepositRequestViewSet(viewsets.ModelViewSet):
             )
             
             # Send notification to reception and admin
-            notify_deposit_request_created(deposit_request)
+            notify_deposit_request_created_task(deposit_request)
             
             serializer = self.get_serializer(deposit_request)
             return Response(serializer.data, status=status.HTTP_201_CREATED)
@@ -426,7 +426,7 @@ class DepositRequestViewSet(viewsets.ModelViewSet):
         try:
             deposit_request.approve()
             # Send notification to user
-            notify_deposit_status_changed(deposit_request, 'verified')
+            notify_deposit_status_changed_task(deposit_request, 'verified')
             return Response({'status': 'deposit approved'})
         except ValidationError as e:
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
@@ -438,7 +438,7 @@ class DepositRequestViewSet(viewsets.ModelViewSet):
         try:
             deposit_request.reject()
             # Send notification to user
-            notify_deposit_status_changed(deposit_request, 'rejected')
+            notify_deposit_status_changed_task(deposit_request, 'rejected')
             return Response({'status': 'deposit rejected'})
         except ValidationError as e:
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)

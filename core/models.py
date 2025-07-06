@@ -503,10 +503,15 @@ class Notification(models.Model):
         ('deposit_request', 'Deposit Request'),
         ('deposit_approved', 'Deposit Approved'),
         ('deposit_rejected', 'Deposit Rejected'),
+        ('course_enrollment','Course Enrollment'),
+        ('enrollment_canceled','Enrollment canceled'),
+        ('enrollment_cancellation','Enrollment Cancelation'),
+        ('course_payment','Course Payment'),
+        ('course_starting',' Course Starting'),
     )
     
     recipient = models.ForeignKey(User, on_delete=models.CASCADE, related_name='notifications')
-    notification_type = models.CharField(max_length=20, choices=NOTIFICATION_TYPES)
+    notification_type = models.CharField(max_length=100, choices=NOTIFICATION_TYPES)
     title = models.CharField(max_length=255)
     message = models.TextField()
     data = models.JSONField(default=dict, blank=True)  # Store additional data like deposit_request_id

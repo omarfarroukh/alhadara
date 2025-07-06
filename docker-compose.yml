@@ -1,67 +1,28 @@
-version: '3.8'
-
 services:
-  app:
+  django:
     build: .
-    image: alhadara-app
     command: >
       sh -c "python manage.py migrate &&
-             uvicorn alhadara.asgi:application --host 0.0.0.0 --port 8000 --workers 4"
-    environment:
-      - DJANGO_SETTINGS_MODULE=alhadara.settings
-      - DEBUG=True
-      - DEVELOPMENT=True
-      - CELERY_BROKER_URL=${LOCAL_REDIS_URL}/0
-      - DATABASE_URL=postgres://${LOCAL_DB_USER}:${LOCAL_DB_PASSWORD}@host.docker.internal:${LOCAL_DB_PORT}/${LOCAL_DB_NAME}
-    volumes:
-      - .:/app
+             uvicorn alhadara.asgi:application --reload --host 0.0.0.0 --port 8000"
     ports:
       - "8000:8000"
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-
-  celery:
-    image: alhadara-app
-    command: celery -A alhadara worker --loglevel=info
-    environment:
-      - DJANGO_SETTINGS_MODULE=alhadara.settings
-      - DEBUG=True
-      - DEVELOPMENT=True
-      - CELERY_BROKER_URL=${LOCAL_REDIS_URL}/0
-      - DATABASE_URL=postgres://${LOCAL_DB_USER}:${LOCAL_DB_PASSWORD}@host.docker.internal:${LOCAL_DB_PORT}/${LOCAL_DB_NAME}
     volumes:
       - .:/app
-    depends_on:
-      - app
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
+    env_file:
+      - .env
 
-  celery-beat:
-    image: alhadara-app
-    command: celery -A alhadara beat --loglevel=info
-    environment:
-      - DJANGO_SETTINGS_MODULE=alhadara.settings
-      - DEBUG=True
-      - DEVELOPMENT=True
-      - CELERY_BROKER_URL=${LOCAL_REDIS_URL}/0
-      - DATABASE_URL=postgres://${LOCAL_DB_USER}:${LOCAL_DB_PASSWORD}@host.docker.internal:${LOCAL_DB_PORT}/${LOCAL_DB_NAME}
+  rqworker:
+    build: .
+    command: python manage.py rqworker default
     volumes:
       - .:/app
-    depends_on:
-      - app
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
+    env_file:
+      - .env
 
-  flower:
-    image: alhadara-app
-    command: celery -A alhadara flower --port=5555
-    environment:
-      - DJANGO_SETTINGS_MODULE=alhadara.settings
-      - DEBUG=True
-      - CELERY_BROKER_URL=${LOCAL_REDIS_URL}/0
-    ports:
-      - "5555:5555"
-    depends_on:
-      - celery
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
+  rqscheduler:
+    build: .
+    command: python manage.py rqscheduler
+    volumes:
+      - .:/app
+    env_file:
+      - .env

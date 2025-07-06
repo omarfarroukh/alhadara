@@ -23,6 +23,11 @@ from datetime import date,time
 from django.utils import timezone
 from django.conf import settings
 import time
+from core.tasks import (
+    notify_course_enrollment_task,
+    notify_course_payment_task,
+    notify_course_cancellation_task
+)
 import logging
 logger = logging.getLogger(__name__)
 User = get_user_model()
@@ -808,6 +813,8 @@ class EnrollmentViewSet(viewsets.ModelViewSet):
             initial_payment = (enrollment.course.price * Decimal('0.3')).quantize(Decimal('0.00'))
             try:
                 enrollment.process_payment(initial_payment)
+                
+                notify_course_enrollment_task.delay(enrollment.id)
             except ValidationError as e:
                 enrollment.delete()
                 raise serializers.ValidationError(str(e))
@@ -876,6 +883,10 @@ class EnrollmentViewSet(viewsets.ModelViewSet):
         
         try:
             enrollment.process_payment(amount, payment_method='ewallet')
+            
+            notify_course_payment_task.delay(enrollment.id, amount)
+
+            
             return Response(self.get_serializer(enrollment).data)
         except ValidationError as e:
             return Response(
@@ -945,17 +956,40 @@ class EnrollmentViewSet(viewsets.ModelViewSet):
     )
     @action(detail=True, methods=['post'])
     def cancel(self, request, pk=None):
-        """Cancel enrollment and process refund"""
+        """Handles cancellations with silent guest processing"""
         enrollment = self.get_object()
         
-        try:
-            enrollment.cancel()
-            return Response(self.get_serializer(enrollment).data)
-        except ValidationError as e:
+        # Block already cancelled enrollments
+        if enrollment.status == 'cancelled':
             return Response(
-                {'error': str(e)},
-                status=status.HTTP_400_BAD_REQUEST
+                {'error': 'This enrollment has already been cancelled'},
+                status=status.HTTP_410_GONE  # 410 Gone = Resource no longer available
             )
+
+        is_staff = request.user.user_type in ['admin', 'reception']
+        
+        # Block student attempts to cancel guests
+        if enrollment.is_guest and not is_staff:
+            return Response(
+                {'error': 'Guest enrollments can only be cancelled by staff'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        try:
+            refund_amount = enrollment.amount_paid
+            enrollment.cancel()
+            
+            # Still call task for all cases (it handles guest logic internally)
+            notify_course_cancellation_task.delay(
+                enrollment_id=enrollment.id,
+                refund_amount=str(refund_amount) if refund_amount else None,
+                cancelled_by_staff=is_staff
+            )
+            
+            return Response(self.get_serializer(enrollment).data)
+            
+        except ValidationError as e:
+            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
             
     @action(detail=False, methods=['post'], permission_classes=[IsReception])
     def create_guest(self, request):

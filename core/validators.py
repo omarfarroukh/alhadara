@@ -9,7 +9,6 @@ syrian_phone_validator = RegexValidator(
     message="Phone number must be: 09XXXXXXXX, +9639XXXXXXXX, or 009639XXXXXXXX"
 )
 
-
 def validate_password_strength(value):
     """
     Validate password meets strong requirements (consistent across all serializers)

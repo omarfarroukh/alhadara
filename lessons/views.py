@@ -2,13 +2,23 @@ from django.shortcuts import render
 from rest_framework import viewsets, permissions, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
-from .models import Lesson, Homework, Attendance
-from .serializers import LessonSerializer, HomeworkSerializer, AttendanceSerializer, LessonSummarySerializer
+from .models import Lesson, Homework, Attendance, HomeworkGrade
+from .serializers import LessonSerializer, HomeworkSerializer, AttendanceSerializer, LessonSummarySerializer, HomeworkGradeSerializer
 from django.db.models import Q
-from core.permissions import IsTeacher, IsStudent, IsAdminOrReception,IsReception
+from core.permissions import IsTeacher
+from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiExample, inline_serializer
+from rest_framework import serializers
 from django.contrib.auth import get_user_model
 from drf_spectacular.utils import extend_schema, OpenApiParameter
 from drf_spectacular.types import OpenApiTypes
+from .serializers import ScheduleSlotNewsSerializer
+from .models import ScheduleSlotNews
+from courses.models import ScheduleSlot
+from rest_framework.decorators import api_view, permission_classes
+from rest_framework.parsers import MultiPartParser, FormParser
+
+from rest_framework.views import APIView
+
 User = get_user_model()
 # Create your views here.
 
@@ -142,6 +152,204 @@ class HomeworkViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         serializer.save()
+    @extend_schema(
+        request=HomeworkGradeSerializer,
+        responses=HomeworkGradeSerializer(many=True),
+        description="List all enrolled students and their grades for this homework"
+    )
+    @action(detail=True, methods=['get'], url_path='grades')
+    def grades(self, request, pk=None):
+        """Get grades - all for teachers, only own for students."""
+        homework = self.get_object()
+        lesson = homework.lesson
+        user = request.user
+
+        if hasattr(user, 'user_type'):
+            if user.user_type == 'teacher':
+                # Teacher sees all grades
+                slot_teacher = getattr(lesson.schedule_slot, 'teacher', None)
+                if user != slot_teacher:
+                    return Response(
+                        {'detail': 'Only the assigned teacher can view grades.'}, 
+                        status=403
+                    )
+                
+                enrollments = lesson.schedule_slot.enrollments.filter(status='active')
+                grades = HomeworkGrade.objects.filter(homework=homework)
+                grade_map = {g.enrollment_id: g for g in grades}
+                
+                result = []
+                for enrollment in enrollments:
+                    grade_obj = grade_map.get(enrollment.id)
+                    if grade_obj:
+                        result.append(grade_obj)
+                    else:
+                        # Create an unsaved HomeworkGrade instance for serializer
+                        result.append(HomeworkGrade(
+                            homework=homework,
+                            enrollment=enrollment,
+                            grade=None,
+                            comment='',
+                            graded_by=None,
+                            graded_at=None
+                        ))
+                return Response(HomeworkGradeSerializer(result, many=True).data)
+
+            elif user.user_type == 'student':
+                # Student sees only their own grade
+                enrollment = lesson.schedule_slot.enrollments.filter(student=user, status='active').first()
+                if not enrollment:
+                    return Response(
+                        {'detail': 'You are not enrolled in this class.'}, 
+                        status=403
+                    )
+                
+                grade = HomeworkGrade.objects.filter(
+                    homework=homework,
+                    enrollment=enrollment
+                ).first()
+                
+                if not grade:
+                    # Return empty grade record if not graded yet
+                    grade = HomeworkGrade(
+                        homework=homework,
+                        enrollment=enrollment,
+                        grade=None,
+                        comment='',
+                        graded_by=None,
+                        graded_at=None
+                    )
+                
+                return Response(HomeworkGradeSerializer(grade).data)
+
+        return Response(
+            {'detail': 'You do not have permission to view grades.'}, 
+            status=403
+        )
+    
+    @extend_schema(
+        request=HomeworkGradeSerializer,
+        responses=HomeworkGradeSerializer,
+        description="Grade a single student for this homework",
+        examples=[
+            OpenApiExample(
+                'Example request',
+                value={
+                    'enrollment': 1,
+                    'grade': 85,
+                    'comment': 'Good work!'
+                },
+                request_only=True
+            )
+        ]
+    )
+    @action(detail=True, methods=['post'], url_path='grade')
+    def grade(self, request, pk=None):
+        """Grade a single student for this homework."""
+        homework = self.get_object()
+        lesson = homework.lesson
+        slot_teacher = getattr(lesson.schedule_slot, 'teacher', None)
+        if not (hasattr(request.user, 'user_type') and request.user.user_type == 'teacher' and request.user == slot_teacher):
+            return Response({'detail': 'Only the assigned teacher can grade.'}, status=403)
+        
+        # Use serializer for request validation
+        serializer = HomeworkGradeSerializer(data=request.data, context={
+            'request': request,
+            'homework': homework
+        })
+        serializer.is_valid(raise_exception=True)
+        
+        # Create or update the grade
+        obj, _ = HomeworkGrade.objects.update_or_create(
+            homework=homework,
+            enrollment=serializer.validated_data['enrollment'],
+            defaults={
+                'grade': serializer.validated_data['grade'],
+                'comment': serializer.validated_data.get('comment', ''),
+                'graded_by': request.user,
+            }
+        )
+        return Response(HomeworkGradeSerializer(obj).data)
+    
+    @extend_schema(
+        request=inline_serializer(
+            name='BulkGradeRequest',
+            fields={
+                'records': HomeworkGradeSerializer(many=True)
+            }
+        ),
+        responses=inline_serializer(
+            name='BulkGradeResponse',
+            fields={
+                'graded': HomeworkGradeSerializer(many=True),
+                'errors': serializers.ListField(child=serializers.DictField())
+            }
+        ),
+        description="Bulk grade students for this homework",
+        examples=[
+            OpenApiExample(
+                'Example request',
+                value={
+                    'records': [
+                        {
+                            'enrollment': 1,
+                            'grade': 85,
+                            'comment': 'Good work!'
+                        },
+                        {
+                            'enrollment': 2,
+                            'grade': 90,
+                            'comment': 'Excellent!'
+                        }
+                    ]
+                },
+                request_only=True
+            )
+        ]
+    )
+    @action(detail=True, methods=['post'], url_path='bulk-grade')
+    def bulk_grade(self, request, pk=None):
+        """Bulk grade students for this homework."""
+        homework = self.get_object()
+        lesson = homework.lesson
+        slot_teacher = getattr(lesson.schedule_slot, 'teacher', None)
+        if not (hasattr(request.user, 'user_type') and request.user.user_type == 'teacher' and request.user == slot_teacher):
+            return Response({'detail': 'Only the assigned teacher can grade.'}, status=403)
+        
+        # Handle both direct array and {records: array} formats
+        grade_records = request.data.get('records', request.data)
+        if not isinstance(grade_records, list):
+            return Response({'detail': 'Expected a list of grade records.'}, status=400)
+        
+        results = []
+        errors = []
+        for record in grade_records:
+            serializer = HomeworkGradeSerializer(data=record, context={
+                'request': request,
+                'homework': homework
+            })
+            if not serializer.is_valid():
+                errors.append({
+                    'record': record,
+                    'errors': serializer.errors
+                })
+                continue
+                
+            obj, _ = HomeworkGrade.objects.update_or_create(
+                homework=homework,
+                enrollment=serializer.validated_data['enrollment'],
+                defaults={
+                    'grade': serializer.validated_data['grade'],
+                    'comment': serializer.validated_data.get('comment', ''),
+                    'graded_by': request.user,
+                }
+            )
+            results.append(obj)
+        
+        data = HomeworkGradeSerializer(results, many=True).data
+        if errors:
+            return Response({'graded': data, 'errors': errors}, status=207)
+        return Response(data)
 
 class AttendanceViewSet(viewsets.ModelViewSet):
     serializer_class = AttendanceSerializer
@@ -219,3 +427,87 @@ class AttendanceViewSet(viewsets.ModelViewSet):
         if errors:
             return Response({'created': created, 'errors': errors}, status=status.HTTP_207_MULTI_STATUS)
         return Response(created, status=status.HTTP_201_CREATED)
+
+class NewsFeedView(APIView):
+    parser_classes = [MultiPartParser, FormParser]
+
+    @extend_schema(
+        parameters=[
+            OpenApiParameter(
+                name='scheduleslot',
+                type=int,
+                location=OpenApiParameter.QUERY,
+                description='ID of the schedule slot to fetch news for',
+                required=True
+            )
+        ],
+        responses=ScheduleSlotNewsSerializer(many=True),
+        description="List all news feed items for a given schedule slot. Only accessible to enrolled students and the assigned teacher."
+    )
+    def get(self, request):
+        slot_id = request.query_params.get('scheduleslot')
+        if not slot_id:
+            return Response({'detail': 'scheduleslot query param required.'}, status=400)
+        try:
+            slot = ScheduleSlot.objects.get(id=slot_id)
+        except ScheduleSlot.DoesNotExist:
+            return Response({'detail': 'ScheduleSlot not found.'}, status=404)
+        user = request.user
+        # Only enrolled students or teacher can view
+        if not (user == slot.teacher or slot.enrollments.filter(student=user).exists()):
+            return Response({'detail': 'Not allowed.'}, status=403)
+        news = ScheduleSlotNews.objects.filter(schedule_slot=slot).order_by('-created_at')
+        return Response(ScheduleSlotNewsSerializer(news, many=True, context={'request': request}).data)
+
+    @extend_schema(
+        request=inline_serializer(
+            name='NewsFeedPostRequest',
+            fields={
+                'scheduleslot': serializers.IntegerField(),
+                'type': serializers.ChoiceField(choices=['message', 'file', 'image']),
+                'title': serializers.CharField(required=False),
+                'content': serializers.CharField(required=False),
+                'file': serializers.FileField(required=False),
+                'image': serializers.ImageField(required=False),
+            }
+        ),
+        responses=ScheduleSlotNewsSerializer,
+        description="Post a new message/file/image to the news feed for a schedule slot. Only the assigned teacher can post."
+    )
+    def post(self, request):
+        slot_id = request.data.get('scheduleslot') or request.query_params.get('scheduleslot')
+        if not slot_id:
+            return Response({'detail': 'scheduleslot required.'}, status=400)
+        
+        try:
+            slot = ScheduleSlot.objects.get(id=slot_id)
+        except ScheduleSlot.DoesNotExist:
+            return Response({'detail': 'ScheduleSlot not found.'}, status=404)
+        
+        user = request.user
+        if not (hasattr(user, 'user_type') and user.user_type == 'teacher' and user == slot.teacher):
+            return Response({'detail': 'Only the assigned teacher can post.'}, status=403)
+        
+        # Create data dictionary without copying request.data (which contains unpicklable file objects)
+        data = {}
+        
+        # Copy only the non-file data
+        for key, value in request.data.items():
+            if key not in ['file', 'image']:
+                data[key] = value
+        
+        # Add required fields
+        data['schedule_slot'] = slot.id
+        data['author'] = user.id
+        
+        # Handle file/image fields explicitly
+        if 'file' in request.FILES:
+            data['file'] = request.FILES['file']
+        if 'image' in request.FILES:
+            data['image'] = request.FILES['image']
+        
+        serializer = ScheduleSlotNewsSerializer(data=data, context={'request': request})
+        if serializer.is_valid():
+            serializer.save()
+            return Response(serializer.data, status=201)
+        return Response(serializer.errors, status=400)

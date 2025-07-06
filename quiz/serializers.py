@@ -223,58 +223,55 @@ class QuizAnswerSubmitSerializer(serializers.ModelSerializer):
         read_only_fields = ['id', 'attempt', 'question', 'points_earned', 'is_correct', 'answered_at']
     
     def validate(self, data):
-        """Validate answer submission"""
+        attempt = self.context.get('_attempt')
+        question = self.context.get('_question')
+        request = self.context['request']
+
         attempt_id = data.get('attempt_id')
         question_order = data.get('question_order')
         choice_orders = data.get('choice_orders', [])
         text_answer = data.get('text_answer', '')
-        
-        # Get the attempt and validate it belongs to the user
-        try:
-            attempt = QuizAttempt.objects.get(
-                id=attempt_id,
-                user=self.context['request'].user,
-                status='in_progress'
-            )
-        except QuizAttempt.DoesNotExist:
-            raise serializers.ValidationError(
-                "Invalid attempt or attempt not in progress"
-            )
-        
-        # Get the question by order
-        try:
-            question = attempt.quiz.questions.get(order=question_order)
-        except Question.DoesNotExist:
-            raise serializers.ValidationError(
-                f"Question with order {question_order} not found in this quiz"
-            )
-        
+
+        # Use pre-fetched attempt if available
+        if not attempt:
+            try:
+                attempt = QuizAttempt.objects.get(
+                    id=attempt_id,
+                    user=request.user,
+                    status='in_progress'
+                )
+            except QuizAttempt.DoesNotExist:
+                raise serializers.ValidationError("Invalid attempt or attempt not in progress")
+
+        # Use pre-fetched question if available
+        if not question:
+            try:
+                question = attempt.quiz.questions.get(order=question_order)
+            except Question.DoesNotExist:
+                raise serializers.ValidationError(
+                    f"Question with order {question_order} not found in this quiz"
+                )
+
         # Validate based on question type
         if question.question_type in ['multiple_choice', 'true_false']:
             if not choice_orders:
                 raise serializers.ValidationError(
                     "You must select at least one choice for this question type"
                 )
-            
-            # Validate that choice orders are valid
-            valid_choice_orders = set(question.choices.values_list('order', flat=True))
-            if not set(choice_orders).issubset(valid_choice_orders):
+            valid_orders = set(question.choices.values_list('order', flat=True))
+            if not set(choice_orders).issubset(valid_orders):
                 raise serializers.ValidationError(
-                    f"Invalid choice orders. Valid orders for this question: {sorted(valid_choice_orders)}"
+                    f"Invalid choice orders. Valid orders: {sorted(valid_orders)}"
                 )
-        
+
         elif question.question_type in ['short_answer', 'essay']:
             if not text_answer.strip():
-                raise serializers.ValidationError(
-                    "Text answer is required for this question type"
-                )
-        
-        # Store the actual question and attempt for later use
-        data['_question'] = question
+                raise serializers.ValidationError("Text answer is required for this question type")
+
         data['_attempt'] = attempt
-        
+        data['_question'] = question
         return data
-    
+
     def create(self, validated_data):
         question = validated_data.pop('_question')
         attempt = validated_data.pop('_attempt')
@@ -352,3 +349,41 @@ class QuizResultSerializer(serializers.ModelSerializer):
             'started_at', 'completed_at', 'status', 'score',
             'total_points', 'earned_points', 'passed', 'answers'
         ] 
+        
+class QuizAnswerItemSerializer(serializers.Serializer):
+    question_order = serializers.IntegerField()
+    choice_orders = serializers.ListField(
+        child=serializers.IntegerField(),
+        required=False,
+        default=[]
+    )
+    text_answer = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        default=""
+    )
+
+class QuizBulkSubmitSerializer(QuizSubmitSerializer):
+    answers = QuizAnswerItemSerializer(many=True)
+
+    def validate(self, data):
+        """Validate all answers belong to the same quiz"""
+        attempt_id = data['attempt_id']
+        answers = data['answers']
+        
+        try:
+            attempt = QuizAttempt.objects.select_related('quiz').get(id=attempt_id)
+            questions = attempt.quiz.questions.all()
+            question_orders = {q.order: q for q in questions}
+            
+            # Validate all question orders exist in this quiz
+            for answer in answers:
+                if answer['question_order'] not in question_orders:
+                    raise serializers.ValidationError({
+                        'question_order': f"Question order {answer['question_order']} not found in this quiz"
+                    })
+        
+        except QuizAttempt.DoesNotExist:
+            raise serializers.ValidationError("Quiz attempt not found")
+        
+        return data

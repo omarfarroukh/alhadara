@@ -8,6 +8,8 @@ import os
 import logging
 logger = logging.getLogger(__name__)
 User = get_user_model()
+from django.db.models.signals import post_save
+from django.dispatch import receiver
 
 # Create your models here.
 class Lesson(models.Model):
@@ -190,3 +192,42 @@ class Attendance(models.Model):
     @property
     def lesson_title(self):
         return self.lesson.title if self.lesson else None
+
+class HomeworkGrade(models.Model):
+    homework = models.ForeignKey(Homework, on_delete=models.CASCADE, related_name='grades')
+    enrollment = models.ForeignKey('courses.Enrollment', on_delete=models.CASCADE, related_name='homework_grades')
+    grade = models.FloatField(null=True, blank=True)
+    comment = models.TextField(blank=True, null=True)
+    graded_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='graded_homeworks')
+    graded_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = ('homework', 'enrollment')
+
+    def __str__(self):
+        return f"{self.homework} - {self.enrollment}: {self.grade}"
+
+class ScheduleSlotNews(models.Model):
+    TYPE_CHOICES = [
+        ('homework', 'Homework'),
+        ('quiz', 'Quiz'),
+        ('message', 'Message'),
+        ('file', 'File'),
+        ('image', 'Image'),
+    ]
+    schedule_slot = models.ForeignKey('courses.ScheduleSlot', on_delete=models.CASCADE, related_name='news')
+    author = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True)
+    type = models.CharField(max_length=20, choices=TYPE_CHOICES)
+    title = models.CharField(max_length=255, blank=True)
+    content = models.TextField(blank=True)
+    file = models.FileField(upload_to='news/files/', blank=True, null=True)
+    image = models.ImageField(upload_to='news/images/', blank=True, null=True)
+    related_homework = models.ForeignKey('lessons.Homework', on_delete=models.SET_NULL, null=True, blank=True)
+    related_quiz = models.ForeignKey('quiz.Quiz', on_delete=models.SET_NULL, null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"{self.schedule_slot} - {self.type} - {self.title}"
