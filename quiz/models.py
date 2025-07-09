@@ -5,6 +5,7 @@ from django.utils import timezone
 from datetime import datetime, timedelta
 from courses.models import ScheduleSlot, Course
 from decimal import Decimal
+from django.core.validators import MinValueValidator, MaxValueValidator
 
 User = get_user_model()
 
@@ -111,7 +112,14 @@ class Question(models.Model):
     quiz = models.ForeignKey(Quiz, on_delete=models.CASCADE, related_name='questions')
     text = models.TextField()
     question_type = models.CharField(max_length=20, choices=QUESTION_TYPES)
-    points = models.PositiveIntegerField(default=1, help_text="Points for this question")
+    points = models.PositiveIntegerField(
+        default=1,
+        help_text="Points for this question (1-100)",
+        validators=[
+            MinValueValidator(1),
+            MaxValueValidator(100)
+        ]
+    )    
     order = models.PositiveIntegerField(default=0, help_text="Question order in quiz")
     is_required = models.BooleanField(default=True)
     related_lessons = models.ManyToManyField('lessons.Lesson', blank=True, related_name='related_questions', help_text="Lessons related to this question for revision feedback.")
