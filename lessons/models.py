@@ -233,3 +233,38 @@ class ScheduleSlotNews(models.Model):
 
     def __str__(self):
         return f"{self.schedule_slot} - {self.type} - {self.title}"
+
+class PrivateLessonRequest(models.Model):
+    STATUS_CHOICES = [
+        ('pending', 'Pending'),
+        ('proposed', 'Proposed Alternatives'),
+        ('confirmed', 'Confirmed'),
+        ('cancelled', 'Cancelled'),
+    ]
+    student = models.ForeignKey(User, on_delete=models.CASCADE, related_name='private_lesson_requests')
+    schedule_slot = models.ForeignKey('courses.ScheduleSlot', on_delete=models.CASCADE, related_name='private_lesson_requests')
+    preferred_date = models.DateField()
+    preferred_time_from = models.TimeField()
+    preferred_time_to = models.TimeField()
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
+    confirmed_date = models.DateField(null=True, blank=True)
+    confirmed_time_from = models.TimeField(null=True, blank=True)
+    confirmed_time_to = models.TimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"{self.student} - {self.schedule_slot} ({self.status})"
+
+class PrivateLessonProposedOption(models.Model):
+    request = models.ForeignKey(PrivateLessonRequest, on_delete=models.CASCADE, related_name='proposed_options')
+    date = models.DateField()
+    time_from = models.TimeField()
+    time_to = models.TimeField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"Option for {self.request} on {self.date} {self.time_from}-{self.time_to}"

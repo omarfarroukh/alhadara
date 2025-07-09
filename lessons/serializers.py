@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import Lesson, Homework, Attendance, HomeworkGrade, ScheduleSlotNews
+from .models import Lesson, Homework, Attendance, HomeworkGrade, ScheduleSlotNews, PrivateLessonRequest, PrivateLessonProposedOption
 from courses.models import Enrollment
 from datetime import date
 from django.contrib.auth import get_user_model
@@ -174,3 +174,24 @@ class ScheduleSlotNewsSerializer(serializers.ModelSerializer):
         model = ScheduleSlotNews
         fields = '__all__'
         read_only_fields = ['id', 'created_at', 'author']
+
+class PrivateLessonProposedOptionSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = PrivateLessonProposedOption
+        fields = ['id', 'date', 'time_from', 'time_to', 'created_at']
+        read_only_fields = ['id', 'created_at']
+
+class PrivateLessonRequestSerializer(serializers.ModelSerializer):
+    proposed_options = PrivateLessonProposedOptionSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = PrivateLessonRequest
+        fields = [
+            'id', 'student', 'schedule_slot', 'preferred_date', 'preferred_time_from', 'preferred_time_to',
+            'status', 'confirmed_date', 'confirmed_time_from', 'confirmed_time_to',
+            'created_at', 'updated_at', 'proposed_options'
+        ]
+        read_only_fields = [
+            'id', 'student', 'status', 'confirmed_date', 'confirmed_time_from', 'confirmed_time_to',
+            'created_at', 'updated_at', 'proposed_options'
+        ]

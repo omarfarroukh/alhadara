@@ -5,7 +5,7 @@ from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from django.db.models import Q, Count, Avg
 from django_filters.rest_framework import DjangoFilterBackend
-from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiResponse,inline_serializer,OpenApiExample
+from drf_spectacular.utils import extend_schema, OpenApiParameter,extend_schema_view
 from drf_spectacular.types import OpenApiTypes
 
 from .models import Quiz, Question, Choice, QuizAttempt, QuizAnswer
@@ -281,36 +281,103 @@ class QuestionViewSet(viewsets.ModelViewSet):
         
         return queryset.prefetch_related('choices', 'related_lessons')
 
+@extend_schema_view(
+    list=extend_schema(
+        description="List all quiz attempts with filtering options",
+        parameters=[
+            OpenApiParameter(
+                name='quiz',
+                type=OpenApiTypes.INT,
+                location=OpenApiParameter.QUERY,
+                description='Filter by quiz ID',
+            ),
+            OpenApiParameter(
+                name='status',
+                type=OpenApiTypes.STR,
+                location=OpenApiParameter.QUERY,
+                description='Filter by attempt status',
+                enum=['in_progress', 'completed', 'abandoned'],
+            ),
+            OpenApiParameter(
+                name='passed',
+                type=OpenApiTypes.BOOL,
+                location=OpenApiParameter.QUERY,
+                description='Filter by pass/fail status',
+            ),
+            OpenApiParameter(
+                name='schedule_slot',
+                type=OpenApiTypes.INT,
+                location=OpenApiParameter.QUERY,
+                description='Filter by schedule slot ID',
+            ),
+            OpenApiParameter(
+                name='ordering',
+                type=OpenApiTypes.STR,
+                location=OpenApiParameter.QUERY,
+                description='Which field to use when ordering the results.',
+                enum=['started_at', '-started_at', 'completed_at', '-completed_at', 'score', '-score'],
+            ),
+        ],
+    ),
+    retrieve=extend_schema(
+        description="Retrieve a specific quiz attempt by ID"
+    ),
+)
 class QuizAttemptViewSet(viewsets.ReadOnlyModelViewSet):
-    """ViewSet for viewing quiz attempts"""
+    """ViewSet for viewing quiz attempts with filtering capabilities.
+    
+    Available filters:
+    - quiz: Filter by quiz ID
+    - status: Filter by attempt status (in_progress, completed, abandoned)
+    - passed: Filter by pass/fail status (true/false)
+    - schedule_slot: Filter by schedule slot ID
+    - ordering: Order results by various fields
+    """
     serializer_class = QuizAttemptSerializer
     filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
-    filterset_fields = ['quiz', 'status', 'passed']
+    filterset_fields = {
+        'quiz': ['exact'],
+        'status': ['exact'],
+        'passed': ['exact'],
+        'quiz__course__schedule_slots': ['exact'],
+    }
     ordering_fields = ['started_at', 'completed_at', 'score']
     ordering = ['-started_at']
     
     def get_queryset(self):
         user = self.request.user
+        queryset = QuizAttempt.objects.all().select_related('quiz', 'user')
+        
+        # Apply schedule_slots filter if provided in query params
+        schedule_slot_id = self.request.query_params.get('schedule_slot')
+        if schedule_slot_id:
+            queryset = queryset.filter(quiz__course__schedule_slots=schedule_slot_id)
         
         if user.user_type == 'student':
             # Students can only see their own attempts
-            return QuizAttempt.objects.filter(user=user).select_related('quiz')
+            return queryset.filter(user=user)
         elif user.user_type == 'teacher':
             # Teachers can see attempts for quizzes they teach
             teaching_slot_ids = user.teaching_slots.values_list('course_id', flat=True)
-            return QuizAttempt.objects.filter(
-                quiz__course_id__in=teaching_slot_ids
-            ).select_related('quiz', 'user')
+            return queryset.filter(quiz__course_id__in=teaching_slot_ids)
         else:
             # Admins/reception can see all attempts
-            return QuizAttempt.objects.all().select_related('quiz', 'user')
+            return queryset
     
     @extend_schema(
+        parameters=[
+            OpenApiParameter(
+                name='schedule_slot',
+                type=OpenApiTypes.INT,
+                location=OpenApiParameter.QUERY,
+                description='Filter by schedule slot ID',
+            ),
+        ],
         responses={200: QuizResultSerializer}
     )
     @action(detail=True, methods=['get'])
     def result(self, request, pk=None):
-        """Get detailed result for a quiz attempt"""
+        """Get detailed result for a specific quiz attempt"""
         attempt = self.get_object()
         
         # Check permissions
@@ -322,7 +389,7 @@ class QuizAttemptViewSet(viewsets.ReadOnlyModelViewSet):
         
         serializer = QuizResultSerializer(attempt, context={'request': request})
         return Response(serializer.data)
-
+       
 class QuizAnswerViewSet(viewsets.ModelViewSet):
     """ViewSet for managing quiz answers"""
     queryset = QuizAnswer.objects.all().select_related('attempt', 'question')

@@ -5,7 +5,7 @@ from rest_framework.response import Response
 from .models import Lesson, Homework, Attendance, HomeworkGrade
 from .serializers import LessonSerializer, HomeworkSerializer, AttendanceSerializer, LessonSummarySerializer, HomeworkGradeSerializer
 from django.db.models import Q
-from core.permissions import IsTeacher
+from core.permissions import IsReception, IsStudent, IsTeacher,IsReceptionOrStudent
 from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiExample, inline_serializer
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
@@ -18,6 +18,9 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.parsers import MultiPartParser, FormParser
 
 from rest_framework.views import APIView
+from rest_framework import mixins, viewsets
+from .serializers import PrivateLessonRequestSerializer, PrivateLessonProposedOptionSerializer
+from .models import PrivateLessonRequest, PrivateLessonProposedOption
 
 User = get_user_model()
 # Create your views here.
@@ -511,3 +514,122 @@ class NewsFeedView(APIView):
             serializer.save()
             return Response(serializer.data, status=201)
         return Response(serializer.errors, status=400)
+
+class PrivateLessonRequestViewSet(viewsets.ModelViewSet):
+    serializer_class = PrivateLessonRequestSerializer
+    queryset = PrivateLessonRequest.objects.select_related('student', 'schedule_slot')
+
+    def get_permissions(self):
+        if self.action in ['create','pick_option']:
+            return [IsStudent()]
+        if self.action in ['propose_option', 'confirm']:
+            return [IsReception()]
+        return [IsReceptionOrStudent()]
+
+    def perform_create(self, serializer):
+        serializer.save(student=self.request.user)
+
+    def get_queryset(self):
+        user = self.request.user
+        qs = super().get_queryset()
+        if hasattr(user, 'user_type'):
+            if user.user_type == 'student':
+                return qs.filter(student=user)
+            if user.user_type == 'reception':
+                return qs
+        return qs.none()
+
+    @extend_schema(
+        request=inline_serializer(
+            name='ProposeOptionsRequest',
+            fields={
+                'options': serializers.ListField(
+                    child=inline_serializer(
+                        name='ProposedOption',
+                        fields={
+                            'date': serializers.DateField(),
+                            'time_from': serializers.TimeField(),
+                            'time_to': serializers.TimeField(),
+                        }
+                    )
+                )
+            }
+        ),
+        responses=PrivateLessonRequestSerializer,
+        description="Reception proposes one or more alternative times."
+    )
+    @action(detail=True, methods=['post'], url_path='propose-option')
+    def propose_option(self, request, pk=None):
+        req = self.get_object()
+        options = request.data.get('options', [])
+        if not isinstance(options, list) or not options:
+            return Response({'detail': 'options must be a non-empty list.'}, status=400)
+        created = []
+        for opt in options:
+            serializer = PrivateLessonProposedOptionSerializer(data=opt)
+            if serializer.is_valid():
+                serializer.save(request=req)
+                created.append(serializer.data)
+            else:
+                return Response(serializer.errors, status=400)
+        req.status = 'proposed'
+        req.save()
+        return Response(self.get_serializer(req).data)
+
+    @extend_schema(
+        request=inline_serializer(
+            name='PickOptionRequest',
+            fields={
+                'option_id': serializers.IntegerField()
+            }
+        ),
+        responses=PrivateLessonRequestSerializer,
+        description="Student picks a proposed option by id."
+    )
+    @action(detail=True, methods=['post'], url_path='pick-option')
+    def pick_option(self, request, pk=None):
+        req = self.get_object()
+        if req.student != request.user:
+            return Response({'detail': 'Not allowed.'}, status=403)
+        option_id = request.data.get('option_id')
+        try:
+            option = req.proposed_options.get(id=option_id)
+        except PrivateLessonProposedOption.DoesNotExist:
+            return Response({'detail': 'Option not found.'}, status=404)
+        req.confirmed_date = option.date
+        req.confirmed_time_from = option.time_from
+        req.confirmed_time_to = option.time_to
+        req.status = 'confirmed'
+        req.save()
+        return Response(self.get_serializer(req).data)
+
+    @extend_schema(
+        request=None,
+        responses=PrivateLessonRequestSerializer,
+        description="Reception confirms the request (only id in path)."
+    )
+    @action(detail=True, methods=['post'], url_path='confirm')
+    def confirm(self, request, pk=None):
+        req = self.get_object()
+        # If not already set, use preferred values
+        if not req.confirmed_date:
+            req.confirmed_date = req.preferred_date
+        if not req.confirmed_time_from:
+            req.confirmed_time_from = req.preferred_time_from
+        if not req.confirmed_time_to:
+            req.confirmed_time_to = req.preferred_time_to
+        req.status = 'confirmed'
+        req.save()
+        return Response(self.get_serializer(req).data)
+
+    @extend_schema(
+        request=None,
+        responses=PrivateLessonRequestSerializer,
+        description="Reception cancels the request (only id in path)."
+    )
+    @action(detail=True, methods=['post'], url_path='cancel')
+    def cancel(self, request, pk=None):
+        req = self.get_object()
+        req.status = 'cancelled'
+        req.save()
+        return Response(self.get_serializer(req).data)
