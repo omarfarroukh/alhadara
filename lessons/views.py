@@ -15,12 +15,13 @@ from .serializers import ScheduleSlotNewsSerializer
 from .models import ScheduleSlotNews
 from courses.models import ScheduleSlot
 from rest_framework.decorators import api_view, permission_classes
-from rest_framework.parsers import MultiPartParser, FormParser
-
+from rest_framework.parsers import MultiPartParser, FormParser,JSONParser
 from rest_framework.views import APIView
 from rest_framework import mixins, viewsets
 from .serializers import PrivateLessonRequestSerializer, PrivateLessonProposedOptionSerializer
 from .models import PrivateLessonRequest, PrivateLessonProposedOption
+from core.services import upload_to_telegram
+from core.models import FileStorage
 
 User = get_user_model()
 # Create your views here.
@@ -432,7 +433,7 @@ class AttendanceViewSet(viewsets.ModelViewSet):
         return Response(created, status=status.HTTP_201_CREATED)
 
 class NewsFeedView(APIView):
-    parser_classes = [MultiPartParser, FormParser]
+    parser_classes = [MultiPartParser, FormParser, JSONParser]
 
     @extend_schema(
         parameters=[
@@ -462,20 +463,33 @@ class NewsFeedView(APIView):
         news = ScheduleSlotNews.objects.filter(schedule_slot=slot).order_by('-created_at')
         return Response(ScheduleSlotNewsSerializer(news, many=True, context={'request': request}).data)
 
+    
     @extend_schema(
-        request=inline_serializer(
-            name='NewsFeedPostRequest',
-            fields={
-                'scheduleslot': serializers.IntegerField(),
-                'type': serializers.ChoiceField(choices=['message', 'file', 'image']),
-                'title': serializers.CharField(required=False),
-                'content': serializers.CharField(required=False),
-                'file': serializers.FileField(required=False),
-                'image': serializers.ImageField(required=False),
-            }
-        ),
+        request={
+            'multipart/form-data': inline_serializer(
+                name='NewsFeedPostMultipartRequest',
+                fields={
+                    'scheduleslot': serializers.IntegerField(),
+                    'type': serializers.ChoiceField(choices=['message', 'file', 'image']),
+                    'title': serializers.CharField(required=False),
+                    'content': serializers.CharField(required=False),
+                    'file': serializers.FileField(required=False),
+                    'image': serializers.ImageField(required=False),
+                }
+            ),
+            'application/json': inline_serializer(
+                name='NewsFeedPostJsonRequest',
+                fields={
+                    'scheduleslot': serializers.IntegerField(),
+                    'type': serializers.ChoiceField(choices=['message', 'file', 'image']),
+                    'title': serializers.CharField(required=False),
+                    'content': serializers.CharField(required=False),
+                    # Note: file/image can't be sent via JSON
+                }
+            )
+        },
         responses=ScheduleSlotNewsSerializer,
-        description="Post a new message/file/image to the news feed for a schedule slot. Only the assigned teacher can post."
+        description="Post a new message/file/image to the news feed for a schedule slot. Only the assigned teacher can post. Files/images must be sent via multipart/form-data."
     )
     def post(self, request):
         slot_id = request.data.get('scheduleslot') or request.query_params.get('scheduleslot')
@@ -491,28 +505,35 @@ class NewsFeedView(APIView):
         if not (hasattr(user, 'user_type') and user.user_type == 'teacher' and user == slot.teacher):
             return Response({'detail': 'Only the assigned teacher can post.'}, status=403)
         
-        # Create data dictionary without copying request.data (which contains unpicklable file objects)
         data = {}
-        
-        # Copy only the non-file data
         for key, value in request.data.items():
             if key not in ['file', 'image']:
                 data[key] = value
-        
-        # Add required fields
         data['schedule_slot'] = slot.id
         data['author'] = user.id
-        
-        # Handle file/image fields explicitly
-        if 'file' in request.FILES:
+        file_storage_obj = None
+        if data.get('type') == 'file' and 'file' in request.FILES:
+            file_obj = request.FILES['file']
+            try:
+                tg_result = upload_to_telegram(file_obj)
+                file_storage_obj = FileStorage.objects.create(
+                    file=file_obj,
+                    telegram_file_id=tg_result['file_id'],
+                    telegram_download_link=tg_result['download_link'],
+                    uploaded_by=user
+                )
+            except Exception as e:
+                return Response({'detail': f'Telegram upload failed: {str(e)}'}, status=500)
+        if file_storage_obj:
+            data['file_storage'] = file_storage_obj.id
+        if 'file' in request.FILES and not file_storage_obj:
             data['file'] = request.FILES['file']
         if 'image' in request.FILES:
             data['image'] = request.FILES['image']
-        
         serializer = ScheduleSlotNewsSerializer(data=data, context={'request': request})
         if serializer.is_valid():
-            serializer.save()
-            return Response(serializer.data, status=201)
+            instance = serializer.save()
+            return Response(ScheduleSlotNewsSerializer(instance, context={'request': request}).data, status=201)
         return Response(serializer.errors, status=400)
 
 class PrivateLessonRequestViewSet(viewsets.ModelViewSet):

@@ -119,6 +119,8 @@ rq = "*"
 rq-scheduler = "*"
 django-rq-dashboard = "*"
 rq-dashboard = "*"
+nest-asyncio = "*"
+python-telegram-bot = "*"
 
 [dev-packages]
 

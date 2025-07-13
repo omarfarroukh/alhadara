@@ -5,7 +5,7 @@ from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from djoser.serializers import UserCreateSerializer as BaseUserCreateSerializer, UserSerializer
 from .models import ( ProfileImage, SecurityQuestion, SecurityAnswer, Interest, 
     Profile, ProfileInterest, EWallet, DepositMethod,
-    BankTransferInfo, MoneyTransferInfo, DepositRequest, StudyField, University, Transaction, Notification
+    BankTransferInfo, MoneyTransferInfo, DepositRequest, StudyField, University, Transaction, Notification, FileStorage
 )
 from django.core.exceptions import ValidationError as DjangoValidationError
 from rest_framework.exceptions import ValidationError as DRFValidationError
@@ -17,11 +17,12 @@ class CustomUserCreateSerializer(serializers.ModelSerializer):
     access = serializers.SerializerMethodField(read_only=True)
     refresh = serializers.SerializerMethodField(read_only=True)
     confirm_password = serializers.CharField(write_only=True, required=True)
+    is_verified = serializers.BooleanField(read_only=True)  # Add this line
 
     class Meta:
         model = User
         fields = ('id', 'phone', 'password', 'confirm_password', 'first_name', 
-                'middle_name', 'last_name', 'user_type', 'access', 'refresh')
+                'middle_name', 'last_name', 'user_type', 'access', 'refresh','is_verified')
         extra_kwargs = {
             'password': {
                 'write_only': True,
@@ -59,7 +60,8 @@ class CustomUserCreateSerializer(serializers.ModelSerializer):
             first_name=validated_data['first_name'],
             middle_name=validated_data['middle_name'],
             last_name=validated_data['last_name'],
-            user_type=validated_data['user_type']  # Now required (no default)
+            user_type=validated_data['user_type'],  # Now required (no default)
+            is_verified=False,  # Explicitly set to False
         )
         return user
 
@@ -82,7 +84,7 @@ class CustomUserSerializer(UserSerializer):
     class Meta(UserSerializer.Meta):
         model = User
         fields = ('id', 'phone', 'first_name', 'middle_name', 'last_name', 
-                 'user_type', 'is_active', 'last_login')
+                 'user_type', 'is_active','is_verified', 'last_login')
         extra_kwargs = {
             'phone': {
                 'error_messages': {
@@ -100,7 +102,9 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
         data.update({
             'refresh': str(refresh),
             'access': str(refresh.access_token),
-            'user_type': self.user.user_type  # Add user_type to response
+            'user_type': self.user.user_type,
+            'phone': self.user.phone,
+            'is_verified':self.user.is_verified
         })
         return data
 
@@ -438,3 +442,14 @@ class NotificationSerializer(serializers.ModelSerializer):
         model = Notification
         fields = ('id', 'notification_type', 'title', 'message', 'data', 'is_read', 'created_at')
         read_only_fields = ('id', 'created_at')
+        
+class TelegramFileSerializer(serializers.Serializer):
+    """Serializes Telegram file metadata for API responses."""
+    file_id = serializers.CharField()
+    download_link = serializers.URLField()
+
+class FileStorageSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = FileStorage
+        fields = ['id', 'telegram_file_id', 'telegram_download_link', 'file', 'uploaded_at']
+        read_only_fields = fields

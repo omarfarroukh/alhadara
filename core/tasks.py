@@ -6,14 +6,50 @@ from asgiref.sync import async_to_sync
 from django.contrib.auth import get_user_model
 from django.utils import timezone
 from courses.models import Enrollment
+import random
+from django.conf import settings
+from telegram import Bot
+from django.core.cache import cache
 from .models import Notification, DepositRequest
+import logging
+import asyncio
 User = get_user_model()
 
 # ------------------------- Core Notification Task -----------------------------
 
+
+logger = logging.getLogger(__name__)
+
+async def _async_send_pin(chat_id, pin):
+    bot = Bot(token=settings.TELEGRAM_BOT_TOKEN)
+    await bot.send_message(
+        chat_id=chat_id,
+        text=f"🔑 Your verification PIN: **{pin}**\n\nEnter this in the app.",
+        parse_mode="Markdown"
+    )
+
+def send_telegram_pin(chat_id, token):
+    try:
+        # Verify token exists
+        if not cache.get(f"user_verification:{token}"):
+            logger.error(f"Token {token} not found in Redis")
+            return
+
+        # Generate and store PIN
+        pin = str(random.randint(100000, 999999))
+        cache.set(f"verification_pin:{token}", pin, timeout=300)
+        logger.info(f"Generated PIN {pin} for token {token}")
+
+        # Run async code in sync context
+        asyncio.run(_async_send_pin(chat_id, pin))
+        logger.info(f"Sent PIN to chat {chat_id}")
+
+    except Exception as e:
+        logger.error(f"Failed to send PIN: {str(e)}")
+
 @job('default',
-     timeout=360,
-     retry=Retry(max=3, interval=[60, 120, 240]))  # Backoff retry logic
+    timeout=360,
+    retry=Retry(max=3, interval=[60, 120, 240]))  # Backoff retry logic
 def send_notification_task(recipient_id, notification_type, title, message, data=None):
     """
     Base task: Creates notification and pushes via WebSocket.
@@ -143,7 +179,7 @@ def notify_course_cancellation_task(enrollment_id, refund_amount=None, cancelled
                 notification_type='enrollment_cancelled',
                 title='Enrollment Cancelled by Staff',
                 message=f"Your enrollment in {enrollment.course.title} was cancelled" +
-                       (f" with refund of {refund_decimal}" if refund_decimal else ""),
+                    (f" with refund of {refund_decimal}" if refund_decimal else ""),
                 data={
                     'enrollment_id': enrollment.id,
                     'course_id': enrollment.course.id,

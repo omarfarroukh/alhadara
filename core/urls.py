@@ -4,7 +4,7 @@ from rest_framework_simplejwt.views import TokenRefreshView, TokenVerifyView
 from .views import (
     PasswordResetViewSet, ProfileImageViewSet, SecurityQuestionViewSet, SecurityAnswerViewSet, InterestViewSet,UserProfileView,
     ProfileViewSet, EWalletViewSet, DepositMethodViewSet, DepositRequestViewSet, CustomTokenObtainPairView, StudyFieldViewSet, UniversityViewSet,
-    TransactionViewSet, NotificationViewSet
+    TransactionViewSet, NotificationViewSet, start_verification, verify_pin
 )
 
 router = DefaultRouter()
@@ -28,6 +28,8 @@ urlpatterns = [
     path('auth/jwt/refresh/', TokenRefreshView.as_view(), name='jwt-refresh'),
     path('auth/jwt/verify/', TokenVerifyView.as_view(), name='jwt-verify'),
     path('profile/me/', UserProfileView.as_view(), name='user-profile'),
+    path('auth/verify/start/', start_verification, name='start-verification'),
+    path('auth/verify/submit/', verify_pin, name='verify-pin'),
     # Router URLs
     path('', include(router.urls)),
 ]

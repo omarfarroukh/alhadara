@@ -1,10 +1,11 @@
 from rest_framework import viewsets, permissions, filters, status
-from rest_framework.decorators import action
+from rest_framework.decorators import action,api_view,permission_classes,authentication_classes
+from rest_framework_simplejwt.authentication import JWTAuthentication
 from rest_framework.response import Response
 from rest_framework import serializers
 from rest_framework_simplejwt.views import TokenObtainPairView
 from rest_framework.parsers import MultiPartParser, FormParser
-from drf_spectacular.utils import extend_schema,OpenApiExample, OpenApiResponse
+from drf_spectacular.utils import extend_schema,OpenApiExample, OpenApiResponse,inline_serializer
 from django.utils.crypto import get_random_string
 from django.utils import timezone
 from rest_framework.permissions import IsAuthenticated
@@ -30,6 +31,8 @@ from django.views.decorators.clickjacking import xframe_options_exempt
 from django.contrib.auth import get_user_model
 import secrets
 import logging
+from django.core.cache import cache
+import uuid
 from django.db.models import Q
 from decimal import Decimal
 import time
@@ -37,6 +40,123 @@ from .tasks import  notify_deposit_request_created_task,notify_deposit_status_ch
 
 logger = logging.getLogger(__name__)
 User = get_user_model()
+
+
+@extend_schema(
+    request=inline_serializer(
+        name="StartVerificationRequest",
+        fields={
+            "phone": serializers.CharField(
+                help_text="User's phone number (e.g., +9639XXXXXXXX)"
+            )
+        },
+    ),
+    responses={
+        200: inline_serializer(
+            name="StartVerificationResponse",
+            fields={
+                "deep_link": serializers.CharField(
+                    help_text="Telegram deep link for verification"
+                )
+            },
+        ),
+        400: OpenApiResponse(description="Invalid phone number or unauthorized request"),
+        403: OpenApiResponse(description="Phone number doesn't match JWT token"),
+    },
+    examples=[
+        OpenApiExample(
+            "Example request",
+            value={"phone": "+963987654321"},
+            request_only=True,
+        ),
+        OpenApiExample(
+            "Example response",
+            value={"deep_link": "https://t.me/YourBot?start=a1b2c3d4"},
+            response_only=True,
+        ),
+    ],
+    description="Initiate phone verification by generating a Telegram deep link. Only the phone number associated with the JWT token can request verification.",
+)
+@api_view(['POST'])
+@authentication_classes([JWTAuthentication])
+@permission_classes([IsAuthenticated])
+def start_verification(request):
+    # Get phone from request
+    requested_phone = request.data.get('phone')
+    if not requested_phone:
+        return Response({"error": "Phone number is required"}, status=400)
+    
+    # Get phone from JWT token
+    jwt_phone = request.user.phone  # Assuming the phone is stored in the user model
+    
+    # Verify the requested phone matches the JWT phone
+    if requested_phone != jwt_phone:
+        return Response({"error": "You can only verify your own phone number"}, status=403)
+    
+    token = str(uuid.uuid4())
+    cache.set(f"user_verification:{token}", requested_phone, timeout=300)  # 5-minute expiry
+    
+    deep_link = f"https://t.me/AlhadaraVerificationBot?start={token}"
+    return Response({
+        "token": token,
+        "deep_link": deep_link
+    })
+    
+# Schema for verify_pin
+@extend_schema(
+    request=inline_serializer(
+        name="VerifyPinRequest",
+        fields={
+            "token": serializers.CharField(help_text="Token from the deep link"),
+            "pin": serializers.CharField(help_text="6-digit PIN from Telegram"),
+        },
+    ),
+    responses={
+        200: inline_serializer(
+            name="VerifyPinResponse",
+            fields={
+                "status": serializers.CharField(
+                    help_text="Verification status"
+                )
+            },
+        ),
+        400: OpenApiResponse(description="Invalid PIN or expired token"),
+    },
+    examples=[
+        OpenApiExample(
+            "Example request",
+            value={"token": "a1b2c3d4", "pin": "123456"},
+            request_only=True,
+        ),
+        OpenApiExample(
+            "Example response",
+            value={"status": "verified"},
+            response_only=True,
+        ),
+    ],
+    description="Submit the PIN received via Telegram to verify the phone number",
+)
+@api_view(['POST'])
+def verify_pin(request):
+    token = request.data.get('token')
+    pin = request.data.get('pin')
+    
+    if not token or not pin:
+        return Response({"error": "Token and PIN are required"}, status=400)
+    
+    cached_pin = cache.get(f"verification_pin:{token}")
+    if cached_pin == pin:
+        phone = cache.get(f"user_verification:{token}")
+        if not phone:
+            return Response({"error": "Expired token"}, status=400)
+            
+        user = User.objects.get(phone=phone)
+        user.is_verified = True
+        user.save()
+        return Response({"status": "verified"})
+    
+    return Response({"error": "Invalid PIN"}, status=400)
+
 
 class CustomTokenObtainPairView(TokenObtainPairView):
     throttle_classes = [LoginRateThrottle]

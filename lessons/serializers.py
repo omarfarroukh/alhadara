@@ -3,6 +3,8 @@ from .models import Lesson, Homework, Attendance, HomeworkGrade, ScheduleSlotNew
 from courses.models import Enrollment
 from datetime import date
 from django.contrib.auth import get_user_model
+from core.models import FileStorage
+from core.serializers import FileStorageSerializer
 User = get_user_model()
 
 class LessonSerializer(serializers.ModelSerializer):
@@ -166,14 +168,22 @@ class HomeworkGradeSerializer(serializers.ModelSerializer):
                 })
         return data
 
+class FileStorageSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = FileStorage
+        fields = ['id', 'telegram_file_id', 'telegram_download_link', 'file', 'uploaded_at']
+        read_only_fields = fields
+
 class ScheduleSlotNewsSerializer(serializers.ModelSerializer):
-    file = serializers.FileField(required=False, allow_null=True)
-    image = serializers.ImageField(required=False, allow_null=True)
+    file_storage = serializers.PrimaryKeyRelatedField(
+        queryset=FileStorage.objects.all(), required=False, allow_null=True
+    )
+    file_storage_details = FileStorageSerializer(source='file_storage', read_only=True)
     
     class Meta:
         model = ScheduleSlotNews
         fields = '__all__'
-        read_only_fields = ['id', 'created_at', 'author']
+        read_only_fields = ['id', 'created_at', 'author', 'file_storage_details']
 
 class PrivateLessonProposedOptionSerializer(serializers.ModelSerializer):
     class Meta:

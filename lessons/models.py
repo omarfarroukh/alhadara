@@ -226,6 +226,7 @@ class ScheduleSlotNews(models.Model):
     image = models.ImageField(upload_to='news/images/', blank=True, null=True)
     related_homework = models.ForeignKey('lessons.Homework', on_delete=models.SET_NULL, null=True, blank=True)
     related_quiz = models.ForeignKey('quiz.Quiz', on_delete=models.SET_NULL, null=True, blank=True)
+    file_storage = models.ForeignKey('core.FileStorage', null=True, blank=True, on_delete=models.SET_NULL)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

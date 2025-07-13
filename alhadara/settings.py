@@ -176,7 +176,7 @@ if DEVELOPMENT:
     DATABASES = {
         'default': {
             'ENGINE': 'django.db.backends.postgresql',
-            'NAME': os.environ.get('LOCAL_DB_NAME', 'alhadara'),
+            'NAME': os.environ.get('LOCAL_DB_NAME', 'hadara2'),
             'USER': os.environ.get('LOCAL_DB_USER', 'postgres'),
             'PASSWORD': os.environ.get('LOCAL_DB_PASSWORD', 'yasser'),
             'HOST': os.environ.get('LOCAL_DB_HOST', 'localhost'),
@@ -264,6 +264,11 @@ RQ_QUEUES = {
 
 RQ_SHOW_ADMIN_LINK = True          # link in Django‑admin sidebar
 RQ_IGNORE_QUEUES = {"failed"}      # hide huge failed queue in dashboard
+
+TELEGRAM_BOT_TOKEN = "7813760928:AAGGyb9makpfiOf69JsY__on_phYU-SLkAQ"
+TELEGRAM_FILE_BOT_TOKEN = os.environ.get('TELEGRAM_FILE_BOT_TOKEN')
+TELEGRAM_FILE_CHAT_ID = os.environ.get('TELEGRAM_FILE_CHAT_ID')
+TELEGRAM_FILE_BOT_USERNAME = os.environ.get('TELEGRAM_FILE_BOT_USERNAME')
 
 
 # Password validation

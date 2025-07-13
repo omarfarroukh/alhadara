@@ -67,6 +67,8 @@ class User(AbstractBaseUser, PermissionsMixin):
     is_active = models.BooleanField(default=True)
     is_staff = models.BooleanField(default=False)
     
+    is_verified = models.BooleanField(default=False)  # New field
+    telegram_chat_id = models.CharField(max_length=50, blank=True, null=True)
     # Timestamps
     last_login = models.DateTimeField(null=True, blank=True)
     date_joined = models.DateTimeField(auto_now_add=True)
@@ -523,3 +525,13 @@ class Notification(models.Model):
     
     def __str__(self):
         return f"{self.notification_type} - {self.recipient.get_full_name()}"
+
+class FileStorage(models.Model):
+    file = models.FileField(upload_to='filestorage/', blank=True, null=True)
+    telegram_file_id = models.CharField(max_length=255, blank=True, null=True)
+    telegram_download_link = models.URLField(blank=True, null=True)
+    uploaded_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True)
+    uploaded_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return self.file.name if self.file else self.telegram_file_id or 'Telegram File'
