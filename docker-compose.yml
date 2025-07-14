@@ -26,3 +26,23 @@ services:
       - .:/app
     env_file:
       - .env
+
+  # Telegram Bot 1
+  telegram_bot_1:
+    build: .
+    command: python manage.py run_bot
+    volumes:
+      - .:/app
+    env_file:
+      - .env
+    restart: unless-stopped  # Auto-restart if crashes
+
+  # Telegram Bot 2
+  telegram_bot_2:
+    build: .
+    command: python manage.py run_file_bot
+    volumes:
+      - .:/app
+    env_file:
+      - .env
+    restart: unless-stopped

@@ -66,6 +66,7 @@ INSTALLED_APPS = [
     'courses',
     'quiz',
     'lessons',
+    'complaints',
     'rest_framework_simplejwt.token_blacklist',
     'cloudinary_storage',
     'cloudinary',

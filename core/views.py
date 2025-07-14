@@ -37,6 +37,8 @@ from django.db.models import Q
 from decimal import Decimal
 import time
 from .tasks import  notify_deposit_request_created_task,notify_deposit_status_changed_task
+from django.db import transaction
+from django.core.exceptions import ValidationError
 
 logger = logging.getLogger(__name__)
 User = get_user_model()
@@ -510,15 +512,12 @@ class DepositRequestViewSet(viewsets.ModelViewSet):
         if not screenshot_file.name.lower().endswith(('.jpg', '.jpeg', '.png')):
             return Response({'error': 'Only JPG/PNG files allowed'}, status=status.HTTP_400_BAD_REQUEST)
 
+        # Use the serializer to create the object
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        
         try:
-            deposit_request = DepositRequest.objects.create(
-                user=request.user,
-                deposit_method_id=request.data.get('deposit_method'),
-                transaction_number=request.data.get('transaction_number'),
-                amount=request.data.get('amount'),
-                screenshot_path=screenshot_file,
-                status='pending'
-            )
+            deposit_request = serializer.save()
             
             # Create PENDING transaction record
             Transaction.objects.create(
@@ -532,9 +531,8 @@ class DepositRequestViewSet(viewsets.ModelViewSet):
             )
             
             # Send notification to reception and admin
-            notify_deposit_request_created_task(deposit_request)
+            notify_deposit_request_created_task.delay(deposit_request.id)
             
-            serializer = self.get_serializer(deposit_request)
             return Response(serializer.data, status=status.HTTP_201_CREATED)
         except Exception as e:
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
@@ -543,26 +541,86 @@ class DepositRequestViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated, IsAdminOrReception])
     def approve(self, request, pk=None):
         deposit_request = self.get_object()
+        
         try:
-            deposit_request.approve()
-            # Send notification to user
-            notify_deposit_status_changed_task(deposit_request, 'verified')
-            return Response({'status': 'deposit approved'})
+            with transaction.atomic():  # Ensure all operations succeed or fail together
+                # Approve the deposit request
+                deposit_request.approve()
+                
+                # Update the associated transaction
+                try:
+                    transaction_obj = Transaction.objects.get(
+                        reference_id=f"DEP-{deposit_request.id}"
+                    )
+                    transaction_obj.status = 'completed'
+                    transaction_obj.save()
+                except Transaction.DoesNotExist:
+                    # Create transaction if it doesn't exist (fallback)
+                    Transaction.objects.create(
+                        sender=None,
+                        receiver=deposit_request.user,
+                        amount=deposit_request.amount,
+                        transaction_type='deposit',
+                        status='completed',
+                        description=f"Deposit request #{deposit_request.id} (approved)",
+                        reference_id=f"DEP-{deposit_request.id}"
+                    )
+                
+                # Send notification
+                notify_deposit_status_changed_task.delay(deposit_request.id, 'verified')
+                
+                return Response(
+                    {'status': 'deposit approved', 'new_balance': str(deposit_request.user.wallet.current_balance)},
+                    status=status.HTTP_200_OK
+                )
+                
         except ValidationError as e:
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as e:
+            return Response({'error': f"Approval failed: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
     @extend_schema(request=None, responses={200: OpenApiTypes.OBJECT})
     @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated, IsAdminOrReception])
     def reject(self, request, pk=None):
         deposit_request = self.get_object()
+        
         try:
-            deposit_request.reject()
-            # Send notification to user
-            notify_deposit_status_changed_task(deposit_request, 'rejected')
-            return Response({'status': 'deposit rejected'})
+            with transaction.atomic():
+                # Reject the deposit request
+                deposit_request.reject()
+                
+                # Update the associated transaction
+                try:
+                    transaction_obj = Transaction.objects.get(
+                        reference_id=f"DEP-{deposit_request.id}"
+                    )
+                    transaction_obj.status = 'failed'
+                    transaction_obj.save()
+                except Transaction.DoesNotExist:
+                    # Create transaction if it doesn't exist (fallback)
+                    Transaction.objects.create(
+                        sender=None,
+                        receiver=deposit_request.user,
+                        amount=deposit_request.amount,
+                        transaction_type='deposit',
+                        status='failed',
+                        description=f"Deposit request #{deposit_request.id} (rejected)",
+                        reference_id=f"DEP-{deposit_request.id}"
+                    )
+                
+                # Send notification
+                notify_deposit_status_changed_task.delay(deposit_request.id, 'rejected')
+                
+                return Response(
+                    {'status': 'deposit rejected'},
+                    status=status.HTTP_200_OK
+                )
+                
         except ValidationError as e:
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
-
+        except Exception as e:
+            return Response({'error': f"Rejection failed: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        
 class PasswordResetViewSet(viewsets.ViewSet):
     """
     Password reset flow using phone number and security questions

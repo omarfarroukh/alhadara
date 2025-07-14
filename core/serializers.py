@@ -372,6 +372,7 @@ class DepositRequestSerializer(serializers.ModelSerializer):
     user_phone = serializers.CharField(source='user.phone', read_only=True)
     deposit_method_name = serializers.CharField(source='deposit_method.name', read_only=True)
     screenshot_url = serializers.SerializerMethodField()
+    user = serializers.PrimaryKeyRelatedField(read_only=True)
     
     class Meta:
         model = DepositRequest
@@ -403,6 +404,10 @@ class DepositRequestSerializer(serializers.ModelSerializer):
         return value
     
     def create(self, validated_data):
+        # Debug print
+        print("DEBUG validated_data:", validated_data)
+        # Remove 'user' if present in validated_data
+        validated_data.pop('user', None)
         # Set the user from the request context
         request = self.context.get('request')
         if request and request.user.is_authenticated:
@@ -410,7 +415,6 @@ class DepositRequestSerializer(serializers.ModelSerializer):
             validated_data['status'] = 'pending'
         else:
             raise serializers.ValidationError("Authentication required")
-        
         # Create the instance - Django will handle the file upload automatically
         return DepositRequest.objects.create(**validated_data)
 

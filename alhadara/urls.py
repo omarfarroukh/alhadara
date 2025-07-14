@@ -18,6 +18,7 @@ urlpatterns = [
     path('api/courses/', include('courses.urls')),
     path('api/quiz/', include('quiz.urls')),
     path('api/lessons/', include('lessons.urls')),
+    path('api/complaints/', include('complaints.urls')),
     path('django-rq/', include('django_rq.urls')),
 ]
 
