@@ -1,7 +1,6 @@
 from rest_framework import serializers
 from courses.serializers import StudentEnrollmentSerializer
 from .models import Complaint
-from courses.models import Enrollment
 
 class ComplaintSerializer(serializers.ModelSerializer):
     """Serializer for student complaint creation and viewing"""
@@ -12,10 +11,10 @@ class ComplaintSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'type', 'title', 'description', 'status', 'priority',
             'created_at', 'updated_at', 'enrollment', 'enrollment_details',
-            'assigned_to', 'resolution_notes', 'resolved_at'
+            'resolution_notes', 'resolved_at'
         ]
         read_only_fields = [
-            'id', 'status', 'created_at', 'updated_at', 'assigned_to',
+            'id', 'status', 'created_at', 'updated_at',
             'resolution_notes', 'resolved_at', 'student'
         ]
         extra_kwargs = {
@@ -47,7 +46,7 @@ class ComplaintResolutionSerializer(serializers.ModelSerializer):
     class Meta:
         model = Complaint
         fields = [
-            'status', 'priority', 'assigned_to', 'resolution_notes'
+            'status', 'priority', 'resolution_notes'
         ]
     
     def validate_status(self, value):

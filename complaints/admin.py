@@ -21,7 +21,7 @@ class ComplaintAdmin(admin.ModelAdmin):
     list_display = ('id', 'title', 'student', 'type', 'status', 'priority', 'created_at')
     list_filter = ('status', 'type', 'priority', 'created_at') + (PriorityListFilter,)
     search_fields = ('title', 'description', 'student__first_name', 'student__last_name')
-    raw_id_fields = ('student', 'enrollment', 'assigned_to')
+    raw_id_fields = ('student', 'enrollment')
     readonly_fields = ('created_at', 'updated_at', 'resolved_at')
     
     fieldsets = (
@@ -33,7 +33,7 @@ class ComplaintAdmin(admin.ModelAdmin):
             'classes': ('collapse',)
         }),
         ('Management', {
-            'fields': ('assigned_to', 'resolution_notes', 'resolved_at'),
+            'fields': ('resolution_notes', 'resolved_at'),
             'classes': ('collapse',)
         }),
         ('Timestamps', {
@@ -49,5 +49,5 @@ class ComplaintAdmin(admin.ModelAdmin):
     mark_as_resolved.short_description = "Mark selected complaints as resolved"
     
     def mark_as_in_review(self, request, queryset):
-        queryset.update(status='in_review', assigned_to=request.user)
+        queryset.update(status='in_review')
     mark_as_in_review.short_description = "Mark selected complaints as in review"

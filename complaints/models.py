@@ -50,15 +50,6 @@ class Complaint(models.Model):
         related_name='complaints'
     )
     
-    # Management fields
-    assigned_to = models.ForeignKey(
-        User,
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-        related_name='assigned_complaints',
-        limit_choices_to={'is_staff': True}
-    )
     resolution_notes = models.TextField(blank=True, null=True)
     resolved_at = models.DateTimeField(blank=True, null=True)
     
