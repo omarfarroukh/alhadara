@@ -114,6 +114,18 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
         token = super().get_token(user)
         token['user_type'] = user.user_type
         return token
+    
+class TeacherSerializer(serializers.ModelSerializer):
+    full_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = User
+        fields = ['id', 'first_name', 'middle_name', 'last_name','full_name', 'phone', 'user_type', 'is_active']
+        read_only_fields = fields
+        
+    def get_full_name(self, obj):
+        return obj.get_full_name()    
+    
 class SecurityQuestionSerializer(serializers.ModelSerializer):
     class Meta:
         model = SecurityQuestion

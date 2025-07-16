@@ -5,7 +5,7 @@ from rest_framework.response import Response
 from rest_framework import serializers
 from rest_framework_simplejwt.views import TokenObtainPairView
 from rest_framework.parsers import MultiPartParser, FormParser
-from drf_spectacular.utils import extend_schema,OpenApiExample, OpenApiResponse,inline_serializer
+from drf_spectacular.utils import extend_schema,OpenApiExample, OpenApiResponse,inline_serializer,OpenApiParameter
 from django.utils.crypto import get_random_string
 from django.utils import timezone
 from rest_framework.permissions import IsAuthenticated
@@ -20,7 +20,7 @@ from .models import (ProfileImage, SecurityQuestion, SecurityAnswer, Interest,
 )
 from .serializers import (
     NewPasswordSerializer, PasswordResetRequestSerializer, ProfileImageSerializer, SecurityAnswerValidationSerializer, SecurityQuestionSerializer, SecurityAnswerSerializer, InterestSerializer, 
-    ProfileSerializer, EWalletSerializer, DepositMethodSerializer, DepositRequestSerializer, AddInterestSerializer,RemoveInterestSerializer, StudyFieldSerializer, UniversitySerializer, TransactionSerializer, NotificationSerializer
+    ProfileSerializer, EWalletSerializer, DepositMethodSerializer, DepositRequestSerializer, AddInterestSerializer,RemoveInterestSerializer, StudyFieldSerializer, TeacherSerializer, UniversitySerializer, TransactionSerializer, NotificationSerializer
 )
 from rest_framework.permissions import AllowAny
 from .permissions import IsStudent,IsReception, IsAdminOrReception, IsOwnerOrAdminOrReception
@@ -42,6 +42,46 @@ from django.core.exceptions import ValidationError
 
 logger = logging.getLogger(__name__)
 User = get_user_model()
+
+class TeacherViewSet(viewsets.ViewSet):
+    """
+    API endpoint that allows teachers to be viewed.
+    Only accessible by admin and reception users.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        return User.objects.filter(user_type='teacher').order_by('last_name', 'first_name')
+
+    @extend_schema(
+        responses={200: TeacherSerializer(many=True)},
+        parameters=[
+            OpenApiParameter(
+                name='is_active',
+                type=bool,
+                required=False,
+                description='Filter by active status (true/false)'
+            ),
+        ]
+    )
+    def list(self, request):
+        # Check if user has permission
+        if not (request.user.user_type in ['admin', 'reception'] or request.user.is_staff):
+            return Response(
+                {"detail": "You do not have permission to perform this action."},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        queryset = self.get_queryset()
+        
+        # Optional filtering by active status
+        is_active = request.query_params.get('is_active')
+        if is_active is not None:
+            is_active = is_active.lower() == 'true'
+            queryset = queryset.filter(is_active=is_active)
+
+        serializer = TeacherSerializer(queryset, many=True)
+        return Response(serializer.data)
 
 
 @extend_schema(

@@ -2,7 +2,7 @@ from django.urls import path, include
 from rest_framework.routers import DefaultRouter
 from rest_framework_simplejwt.views import TokenRefreshView, TokenVerifyView
 from .views import (
-    PasswordResetViewSet, ProfileImageViewSet, SecurityQuestionViewSet, SecurityAnswerViewSet, InterestViewSet,UserProfileView,
+    PasswordResetViewSet, ProfileImageViewSet, SecurityQuestionViewSet, SecurityAnswerViewSet, InterestViewSet, TeacherViewSet,UserProfileView,
     ProfileViewSet, EWalletViewSet, DepositMethodViewSet, DepositRequestViewSet, CustomTokenObtainPairView, StudyFieldViewSet, UniversityViewSet,
     TransactionViewSet, NotificationViewSet, start_verification, verify_pin
 )
@@ -21,6 +21,8 @@ router.register(r'universities', UniversityViewSet)
 router.register(r'studyfields', StudyFieldViewSet)
 router.register(r'transactions', TransactionViewSet, basename='transaction')
 router.register(r'notifications', NotificationViewSet, basename='notification')
+router.register(r'teachers', TeacherViewSet, basename='teacher')
+
 
 urlpatterns = [
     # JWT Authentication endpoints
