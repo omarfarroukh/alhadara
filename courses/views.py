@@ -754,7 +754,7 @@ class WishlistViewSet(viewsets.ReadOnlyModelViewSet):
 class EnrollmentViewSet(viewsets.ModelViewSet):
     permission_classes = [permissions.IsAuthenticated]
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
-    filterset_fields = ['status', 'payment_status', 'course', 'is_guest', 'payment_method']
+    filterset_fields = ['status', 'payment_status', 'course', 'is_guest', 'payment_method', 'schedule_slot']
     search_fields = [
         'course__title', 
         'student__first_name', 'student__last_name',
@@ -790,8 +790,55 @@ class EnrollmentViewSet(viewsets.ModelViewSet):
             return queryset.filter(Q(student=user) | Q(enrolled_by=user))
         return Enrollment.objects.none()
     
+    @extend_schema(
+        parameters=[
+            OpenApiParameter(
+                name='schedule_slot',
+                description='Filter by schedule slot ID',
+                required=False,
+                type=OpenApiTypes.INT,
+                location=OpenApiParameter.QUERY
+            ),
+            OpenApiParameter(
+                name='status',
+                description='Filter by enrollment status',
+                required=False,
+                type=OpenApiTypes.STR,
+                location=OpenApiParameter.QUERY
+            ),
+            OpenApiParameter(
+                name='payment_status',
+                description='Filter by payment status',
+                required=False,
+                type=OpenApiTypes.STR,
+                location=OpenApiParameter.QUERY
+            ),
+            OpenApiParameter(
+                name='course',
+                description='Filter by course ID',
+                required=False,
+                type=OpenApiTypes.INT,
+                location=OpenApiParameter.QUERY
+            ),
+            OpenApiParameter(
+                name='is_guest',
+                description='Filter by guest status',
+                required=False,
+                type=OpenApiTypes.BOOL,
+                location=OpenApiParameter.QUERY
+            ),
+            OpenApiParameter(
+                name='payment_method',
+                description='Filter by payment method',
+                required=False,
+                type=OpenApiTypes.STR,
+                location=OpenApiParameter.QUERY
+            ),
+        ],
+    )
+    def list(self, request, *args, **kwargs):
+        return super().list(request, *args, **kwargs)
     
-
     def perform_create(self, serializer):
         """Create enrollment and process initial payment"""
         try:
