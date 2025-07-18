@@ -70,7 +70,10 @@ INSTALLED_APPS = [
     'rest_framework_simplejwt.token_blacklist',
     'cloudinary_storage',
     'cloudinary',
-    'drf_yasg'
+    'drf_yasg',
+    'loyaltypoints',
+    'referrals',
+    'feedback',
 ]
 
 MIDDLEWARE = [

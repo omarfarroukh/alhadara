@@ -19,6 +19,9 @@ urlpatterns = [
     path('api/quiz/', include('quiz.urls')),
     path('api/lessons/', include('lessons.urls')),
     path('api/complaints/', include('complaints.urls')),
+    path('api/loyaltypoints/', include('loyaltypoints.urls')),
+    path('api/referrals/', include('referrals.urls')),
+    path('api/feedback/', include('feedback.urls')),
     path('django-rq/', include('django_rq.urls')),
 ]
 

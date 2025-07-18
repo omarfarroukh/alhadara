@@ -537,13 +537,6 @@ class ScheduleSlotViewSet(viewsets.ModelViewSet):
                 location=OpenApiParameter.QUERY,
                 description='Optional schedule slot id to filter for a single slot',
                 required=False
-            ),
-            OpenApiParameter(
-                name='upcoming_only',
-                type=OpenApiTypes.BOOL,
-                location=OpenApiParameter.QUERY,
-                description='Filter to only upcoming schedule slots (default: true)',
-                required=False
             )
         ],
         responses={200: TeacherScheduleSlotSerializer(many=True)}
@@ -559,7 +552,6 @@ class ScheduleSlotViewSet(viewsets.ModelViewSet):
             
         today = date.today()
         slot_id = request.query_params.get('id')
-        upcoming_only = request.query_params.get('upcoming_only', 'true').lower() == 'true'
         
         # Base queryset with prefetching
         queryset = ScheduleSlot.objects.filter(
@@ -573,12 +565,6 @@ class ScheduleSlotViewSet(viewsets.ModelViewSet):
         queryset = queryset.filter(
             Q(valid_until__gte=today) | Q(valid_until__isnull=True)
         )
-        
-        # Additional upcoming_only filter if requested
-        if upcoming_only:
-            queryset = queryset.filter(
-                Q(valid_from__gte=today) | Q(valid_from__isnull=True)
-            )
         
         # Filter by id if provided
         if slot_id:

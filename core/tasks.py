@@ -1,3 +1,4 @@
+from datetime import date
 from decimal import Decimal
 from django_rq import job, get_queue
 from rq import Retry
@@ -279,3 +280,43 @@ def send_course_reminders_task():
             sent += 1
             
     return f"Sent {sent} course reminder notifications"
+
+
+@job
+def update_enrollment_statuses_bulk():
+    """Update enrollment statuses using bulk operations"""
+    from django.db import transaction
+    from datetime import date
+    
+    today = date.today()
+    print(f"Using test date: {today}")
+    
+    updated_count = 0
+    
+    with transaction.atomic():
+        # Update to pending (courses that haven't started yet)
+        pending_count = Enrollment.objects.filter(
+            schedule_slot__valid_from__gt=today,
+            status__in=['active', 'completed']
+        ).exclude(status='cancelled').update(status='pending')
+        
+        # Update to completed (courses that have ended - using > not >=)
+        completed_count = Enrollment.objects.filter(
+            schedule_slot__valid_until__lt=today,
+            status__in=['pending', 'active']
+        ).exclude(status='cancelled').update(status='completed')
+        
+        # Update to active (courses that are currently running)
+        active_count = Enrollment.objects.filter(
+            schedule_slot__valid_from__lte=today,
+            schedule_slot__valid_until__gte=today,
+            status__in=['pending', 'completed']
+        ).exclude(status='cancelled').update(status='active')
+        
+        updated_count = pending_count + completed_count + active_count
+    
+    print(f"Bulk updated {updated_count} enrollments")
+    print(f"  - Pending: {pending_count}")
+    print(f"  - Completed: {completed_count}")
+    print(f"  - Active: {active_count}")
+    return updated_count

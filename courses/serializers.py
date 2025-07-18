@@ -122,13 +122,18 @@ class ScheduleSlotSerializer(serializers.ModelSerializer):
     teacher_name = serializers.SerializerMethodField()
     duration_hours = serializers.SerializerMethodField()
     remaining_seats = serializers.SerializerMethodField()
-
+    enrolled_count = serializers.SerializerMethodField()
+    course_progress = serializers.SerializerMethodField()
+    lessons_count = serializers.SerializerMethodField()
+    average_attendance_percentage = serializers.SerializerMethodField()
+    
     class Meta:
         model = ScheduleSlot
         fields = (
             'id', 'course', 'course_title', 'hall', 'hall_name', 'teacher', 'teacher_name',
             'days_of_week', 'start_time', 'end_time', 'duration_hours','remaining_seats',
-            'recurring', 'valid_from', 'valid_until'
+            'recurring', 'valid_from', 'valid_until',
+            'course_progress', 'average_attendance_percentage','enrolled_count','lessons_count'
         )
         extra_kwargs = {
             'valid_until': {'required': False},
@@ -155,13 +160,48 @@ class ScheduleSlotSerializer(serializers.ModelSerializer):
         remaining = obj.course.max_students - active_enrollments
         return max(remaining, 0)  # Ensure we don't return negative numbers
 
-    
     def get_duration_hours(self, obj):
         """Calculate duration in hours including minutes"""
         duration = (obj.end_time.hour - obj.start_time.hour) + \
                   (obj.end_time.minute - obj.start_time.minute)/60
         return round(duration, 2)
 
+    def get_course_progress(self, obj):
+        from datetime import datetime, date
+        slot = obj
+        if not slot or not slot.start_time or not slot.end_time:
+            return 0.0
+        slot_duration = (datetime.combine(date.today(), slot.end_time) - datetime.combine(date.today(), slot.start_time)).total_seconds() / 3600
+        completed_count = obj.lessons_in_lessons_app.filter(status='completed').count()
+        course_hours = obj.course.duration
+        if course_hours > 0 and slot_duration > 0:
+            progress = (completed_count * slot_duration) / course_hours * 100
+            return round(min(progress, 100), 2)
+        return 0.0
+    
+    def get_enrolled_count(self, obj):
+        """Get count of enrolled students for this schedule slot"""
+        return obj.enrollments.filter(status__in=['pending', 'active']).count()
+
+    def get_lessons_count(self, obj):
+        return Lesson.objects.filter(schedule_slot=obj, course=obj.course).count()
+
+    def get_average_attendance_percentage(self, obj):
+        from lessons.models import Attendance, Lesson
+        completed_lessons = Lesson.objects.filter(schedule_slot=obj, status='completed')
+        if not completed_lessons.exists():
+            return 0.0
+        lesson_attendance_rates = []
+        for lesson in completed_lessons:
+            total_enrollments = Attendance.objects.filter(lesson=lesson).count()
+            if total_enrollments == 0:
+                lesson_attendance_rates.append(0.0)
+                continue
+            present_count = Attendance.objects.filter(lesson=lesson, attendance='present').count()
+            lesson_attendance_rates.append(present_count / total_enrollments)
+        avg = sum(lesson_attendance_rates) / len(lesson_attendance_rates) * 100
+        return round(avg, 2)
+    
     def validate_days_of_week(self, value):
         """Validate the days_of_week field"""
         if not value:
@@ -202,13 +242,9 @@ class ScheduleSlotSerializer(serializers.ModelSerializer):
 class TeacherScheduleSlotSerializer(ScheduleSlotSerializer):
     """Serializer for teacher's schedule slots with enrolled students"""
     enrolled_students = serializers.SerializerMethodField()
-    enrolled_count = serializers.SerializerMethodField()
-    course_progress = serializers.SerializerMethodField()
-    lessons_count = serializers.SerializerMethodField()
-    average_attendance_percentage = serializers.SerializerMethodField()
     
     class Meta(ScheduleSlotSerializer.Meta):
-        fields = list(ScheduleSlotSerializer.Meta.fields) + ['enrolled_students', 'enrolled_count', 'course_progress', 'lessons_count', 'average_attendance_percentage']
+        fields = list(ScheduleSlotSerializer.Meta.fields) + ['enrolled_students']
     
     def get_enrolled_students(self, obj):
         """Get list of enrolled students for this schedule slot"""
@@ -235,41 +271,7 @@ class TeacherScheduleSlotSerializer(ScheduleSlotSerializer):
         
         return students
     
-    def get_enrolled_count(self, obj):
-        """Get count of enrolled students for this schedule slot"""
-        return obj.enrollments.filter(status__in=['pending', 'active']).count()
 
-    def get_course_progress(self, obj):
-        from datetime import datetime, date
-        slot = obj
-        if not slot or not slot.start_time or not slot.end_time:
-            return 0.0
-        slot_duration = (datetime.combine(date.today(), slot.end_time) - datetime.combine(date.today(), slot.start_time)).total_seconds() / 3600
-        completed_count = obj.lessons_in_lessons_app.filter(status='completed').count()
-        course_hours = obj.course.duration
-        if course_hours > 0 and slot_duration > 0:
-            progress = (completed_count * slot_duration) / course_hours * 100
-            return round(min(progress, 100), 2)
-        return 0.0
-
-    def get_lessons_count(self, obj):
-        return Lesson.objects.filter(schedule_slot=obj, course=obj.course).count()
-
-    def get_average_attendance_percentage(self, obj):
-        from lessons.models import Attendance, Lesson
-        completed_lessons = Lesson.objects.filter(schedule_slot=obj, status='completed')
-        if not completed_lessons.exists():
-            return 0.0
-        lesson_attendance_rates = []
-        for lesson in completed_lessons:
-            total_enrollments = Attendance.objects.filter(lesson=lesson).count()
-            if total_enrollments == 0:
-                lesson_attendance_rates.append(0.0)
-                continue
-            present_count = Attendance.objects.filter(lesson=lesson, attendance='present').count()
-            lesson_attendance_rates.append(present_count / total_enrollments)
-        avg = sum(lesson_attendance_rates) / len(lesson_attendance_rates) * 100
-        return round(avg, 2)
 
 class BookingSerializer(serializers.ModelSerializer):
     hall_name = serializers.ReadOnlyField(source='hall.name')

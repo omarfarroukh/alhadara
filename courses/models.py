@@ -8,7 +8,6 @@ from django.core.exceptions import ValidationError
 from django.core.validators import FileExtensionValidator
 import time
 from django.contrib.auth import get_user_model
-import os
 import logging
 from core.validators import syrian_phone_validator
 logger = logging.getLogger(__name__)
@@ -548,14 +547,15 @@ class Enrollment(models.Model):
         ('pending', 'Pending'),
         ('active', 'Active'),
         ('completed', 'Completed'),
-        ('cancelled', 'Cancelled')
+        ('cancelled', 'Cancelled'),
     )
     
     PAYMENT_STATUS_CHOICES = (
         ('partial', 'Partial'),
         ('paid', 'Paid'),
-        ('refunded', 'Refunded')
+        ('refunded', 'Refunded'),
     )
+    
     PAYMENT_METHOD_CHOICES = (
         ('ewallet', 'eWallet'),
         ('cash', 'Cash'),
@@ -565,60 +565,70 @@ class Enrollment(models.Model):
         max_length=10,
         choices=PAYMENT_METHOD_CHOICES,
         null=True,
-        blank=True
+        blank=True,
     )
+    
     student = models.ForeignKey(
         User,
         on_delete=models.CASCADE,
         null=True,
         blank=True,
-        related_name='enrollments'
+        related_name='enrollments',
     )
-    # Add these new fields
+    
+    # Guest info
     first_name = models.CharField(max_length=150, blank=True)
     middle_name = models.CharField(max_length=150, blank=True)
     last_name = models.CharField(max_length=150, blank=True)
     phone = models.CharField(
         max_length=20,
         blank=True,
-        validators=[syrian_phone_validator]
+        validators=[syrian_phone_validator],
     )
     is_guest = models.BooleanField(default=False)
+    
     enrolled_by = models.ForeignKey(
         User,
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
         related_name='created_enrollments',
-        limit_choices_to={'user_type': 'reception'}
+        limit_choices_to={'user_type': 'reception'},
     )
+    
     course = models.ForeignKey(
         Course,
         on_delete=models.CASCADE,
-        related_name='enrollments'
+        related_name='enrollments',
     )
+    
     schedule_slot = models.ForeignKey(
         ScheduleSlot,
         on_delete=models.SET_NULL,
         null=True,
-        related_name='enrollments'
+        related_name='enrollments',
     )
+    
     status = models.CharField(
         max_length=10,
         choices=STATUS_CHOICES,
-        default='pending'
+        default='pending',
     )
+    
     payment_status = models.CharField(
         max_length=10,
         choices=PAYMENT_STATUS_CHOICES,
-        default='partial'
+        default='partial',
     )
+    
     enrollment_date = models.DateTimeField(auto_now_add=True)
+    
     amount_paid = models.DecimalField(
         max_digits=10,
         decimal_places=2,
-        default=0
+        default=0,
     )
+    
     notes = models.TextField(blank=True, null=True)
     
     class Meta:
@@ -655,26 +665,54 @@ class Enrollment(models.Model):
                 raise ValidationError("Schedule slot has reached maximum capacity")
     
     def update_status(self):
-        """Update status based on schedule slot dates"""
+        """Update status based on schedule slot dates - using > not >="""
         if not self.schedule_slot:
             return
-            
+        
+        from datetime import date
+        
         today = date.today()
         
+        valid_from = self.to_date(self.schedule_slot.valid_from)
+        valid_until = self.to_date(self.schedule_slot.valid_until)
+        
+        print(
+            f"Enrollment {self.id}: today={today}, "
+            f"valid_from={valid_from}, valid_until={valid_until}, current_status={self.status}"
+        )
+        
         if self.status != 'cancelled':
-            if today < self.schedule_slot.valid_from:
+            if valid_from and valid_until:
+                if today < valid_from:
+                    self.status = 'pending'
+                elif today > valid_until:  # Changed from >= to >
+                    self.status = 'completed'
+                else:
+                    self.status = 'active'
+            elif valid_from and today < valid_from:
                 self.status = 'pending'
-            elif today >= self.schedule_slot.valid_from and (
-                not self.schedule_slot.valid_until or 
-                today <= self.schedule_slot.valid_until
-            ):
-                self.status = 'active'
-            elif self.schedule_slot.valid_until and today > self.schedule_slot.valid_until:
+            elif valid_until and today > valid_until:  # Changed from >= to >
                 self.status = 'completed'
+            else:
+                self.status = 'active'
+        
+        print(f"Enrollment {self.id}: new_status={self.status}")
+
+
+    def to_date(self, val):
+        if isinstance(val, date):
+            return val
+        if isinstance(val, str):
+            try:
+                return datetime.strptime(val, "%Y-%m-%d").date()
+            except ValueError:
+                return None
+        return None
     
     def process_payment(self, amount, payment_method='ewallet'):
         """Process payment with support for both eWallet and cash"""
         from core.models import EWallet, Transaction
+        from loyaltypoints.tasks import award_points_task
         
         amount = amount.quantize(Decimal('0.00'))
         if amount <= 0:
@@ -683,7 +721,6 @@ class Enrollment(models.Model):
         if amount > self.course.price - self.amount_paid:
             raise ValidationError("Payment amount exceeds remaining balance")
         
-        # Set payment method automatically
         self.payment_method = payment_method
         
         if payment_method == 'ewallet':
@@ -723,6 +760,7 @@ class Enrollment(models.Model):
                 admin = User.objects.filter(is_staff=True).first()
                 if not admin:
                     raise ValidationError("Admin account not found")
+                
                 admin_wallet = EWallet.objects.get(user=admin)
                 admin_wallet.deposit(amount)
 
@@ -759,12 +797,23 @@ class Enrollment(models.Model):
         self.payment_status = 'paid' if self.amount_paid >= self.course.price else 'partial'
         self.save()
 
+        # Award loyalty points (only for student payments, not guests)
+        if self.student and not self.is_guest:
+            if self.amount_paid == amount:
+                # First payment → 5% points
+                points = int(amount * Decimal('0.05'))
+                reason = f"5% loyalty points for initial payment of {amount} on course {self.course.title}"
+            else:
+                points = int(amount * Decimal('0.01'))
+                reason = f"1% loyalty points for additional payment of {amount} on course {self.course.title}"
+            if points > 0:
+                award_points_task.delay(self.student.id, points, reason)
+
     def cancel(self):
         """Cancel enrollment and process refund"""
         if self.status == 'cancelled':
             return
             
-        # Process refund if payment was made
         if self.amount_paid > 0:
             from core.models import EWallet, Transaction
             
@@ -772,9 +821,7 @@ class Enrollment(models.Model):
                 admin = User.objects.get(is_staff=True)
                 admin_wallet = EWallet.objects.get(user=admin)
                 
-                # For guest enrollments, we just deduct from admin wallet
                 if self.is_guest:
-                    # Use the generic Guest user as receiver
                     guest_user, _ = User.objects.get_or_create(
                         phone='guest',
                         defaults={
@@ -789,7 +836,7 @@ class Enrollment(models.Model):
                     
                     Transaction.objects.create(
                         sender=admin,
-                        receiver=guest_user,  # Use guest user as receiver
+                        receiver=guest_user,
                         amount=self.amount_paid,
                         transaction_type='course_refund',
                         status='completed',
@@ -800,7 +847,6 @@ class Enrollment(models.Model):
                         reference_id=f"REFUND-{self.id}-{int(time.time())}"
                     )
                 else:
-                    # Regular student refund
                     student_wallet = EWallet.objects.get(user=self.student)
                     
                     if admin_wallet.current_balance < self.amount_paid:
@@ -830,6 +876,6 @@ class Enrollment(models.Model):
     
     def save(self, *args, **kwargs):
         self.full_clean()
-        self.update_status()  # Update status before saving
+        self.update_status()
         super().save(*args, **kwargs)
-        
+    
