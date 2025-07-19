@@ -180,11 +180,11 @@ if DEVELOPMENT:
     DATABASES = {
         'default': {
             'ENGINE': 'django.db.backends.postgresql',
-            'NAME': os.environ.get('LOCAL_DB_NAME', 'hadara2'),
-            'USER': os.environ.get('LOCAL_DB_USER', 'postgres'),
-            'PASSWORD': os.environ.get('LOCAL_DB_PASSWORD', 'yasser'),
-            'HOST': os.environ.get('LOCAL_DB_HOST', 'localhost'),
-            'PORT': os.environ.get('LOCAL_DB_PORT', '5432'),
+            'NAME': os.environ.get('LOCAL_DB_NAME'),
+            'USER': os.environ.get('LOCAL_DB_USER'),
+            'PASSWORD': os.environ.get('LOCAL_DB_PASSWORD'),
+            'HOST': os.environ.get('LOCAL_DB_HOST'),
+            'PORT': os.environ.get('LOCAL_DB_PORT'),
         }
     }
 else:
@@ -269,7 +269,7 @@ RQ_QUEUES = {
 RQ_SHOW_ADMIN_LINK = True          # link in Django‑admin sidebar
 RQ_IGNORE_QUEUES = {"failed"}      # hide huge failed queue in dashboard
 
-TELEGRAM_BOT_TOKEN = "7813760928:AAGGyb9makpfiOf69JsY__on_phYU-SLkAQ"
+TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN')
 TELEGRAM_FILE_BOT_TOKEN = os.environ.get('TELEGRAM_FILE_BOT_TOKEN')
 TELEGRAM_FILE_CHAT_ID = os.environ.get('TELEGRAM_FILE_CHAT_ID')
 TELEGRAM_FILE_BOT_USERNAME = os.environ.get('TELEGRAM_FILE_BOT_USERNAME')
