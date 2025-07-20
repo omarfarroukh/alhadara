@@ -193,15 +193,52 @@ class PrivateLessonProposedOptionSerializer(serializers.ModelSerializer):
 
 class PrivateLessonRequestSerializer(serializers.ModelSerializer):
     proposed_options = PrivateLessonProposedOptionSerializer(many=True, read_only=True)
+    student_name = serializers.SerializerMethodField(read_only=True)
+    student_phone = serializers.SerializerMethodField(read_only=True)
+    slot_teacher_name = serializers.SerializerMethodField(read_only=True)
+    slot_course_name = serializers.SerializerMethodField(read_only=True)
 
     class Meta:
         model = PrivateLessonRequest
         fields = [
-            'id', 'student', 'schedule_slot', 'preferred_date', 'preferred_time_from', 'preferred_time_to',
+            'id', 'student', 'student_name', 'student_phone', 'schedule_slot', 'slot_teacher_name', 'slot_course_name',
+            'preferred_date', 'preferred_time_from', 'preferred_time_to',
             'status', 'confirmed_date', 'confirmed_time_from', 'confirmed_time_to',
             'created_at', 'updated_at', 'proposed_options'
         ]
         read_only_fields = [
-            'id', 'student', 'status', 'confirmed_date', 'confirmed_time_from', 'confirmed_time_to',
-            'created_at', 'updated_at', 'proposed_options'
+            'id', 'student', 'student_name', 'student_phone', 'status', 'confirmed_date', 'confirmed_time_from', 'confirmed_time_to',
+            'created_at', 'updated_at', 'proposed_options', 'slot_teacher_name', 'slot_course_name'
         ]
+
+    def get_student_name(self, obj):
+        if obj.student:
+            return obj.student.get_full_name() if hasattr(obj.student, 'get_full_name') else str(obj.student)
+        return None
+
+    def get_student_phone(self, obj):
+        if obj.student and hasattr(obj.student, 'phone'):
+            return obj.student.phone
+        return None
+
+    def get_slot_teacher_name(self, obj):
+        if obj.schedule_slot and obj.schedule_slot.teacher:
+            return obj.schedule_slot.teacher.get_full_name() if hasattr(obj.schedule_slot.teacher, 'get_full_name') else str(obj.schedule_slot.teacher)
+        return None
+
+    def get_slot_course_name(self, obj):
+        if obj.schedule_slot and obj.schedule_slot.course:
+            return obj.schedule_slot.course.title
+        return None
+
+    def to_representation(self, instance):
+        rep = super().to_representation(instance)
+        request = self.context.get('request')
+        user = getattr(request, 'user', None)
+        allowed_types = ['admin', 'reception']
+        if not (user and hasattr(user, 'user_type') and user.user_type in allowed_types):
+            rep.pop('student_name', None)
+            rep.pop('student_phone', None)
+            rep.pop('slot_teacher_name', None)
+            rep.pop('slot_course_name', None)
+        return rep
