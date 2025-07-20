@@ -643,12 +643,13 @@ class Enrollment(models.Model):
         
         # Check if student is already enrolled
         if not self.pk:  # Only check on creation
-            if Enrollment.objects.filter(
-                student=self.student,
-                course=self.course,
-                status__in=['pending', 'active']
-            ).exists():
-                raise ValidationError("Student is already enrolled in this course")
+            if not self.is_guest and self.student:
+                if Enrollment.objects.filter(
+                    student=self.student,
+                    course=self.course,
+                    status__in=['pending', 'active']
+                ).exists():
+                    raise ValidationError("Student is already enrolled in this course")
         
         # Check schedule slot capacity
         if self.schedule_slot:
