@@ -1,4 +1,6 @@
 from rest_framework import serializers
+
+from core.services import upload_to_telegram
 from .models import Lesson, Homework, Attendance, HomeworkGrade, ScheduleSlotNews, PrivateLessonRequest, PrivateLessonProposedOption
 from courses.models import Enrollment
 from datetime import date
@@ -9,16 +11,28 @@ User = get_user_model()
 
 class LessonSerializer(serializers.ModelSerializer):
     has_homework = serializers.SerializerMethodField()
+    file = serializers.FileField(
+        write_only=True,
+        required=False,
+        allow_null=True,
+        help_text="Upload lesson materials (PDF, DOC, PPT, etc.)"
+    )
+    file_storage_details = FileStorageSerializer(
+        source='file_storage',
+        read_only=True
+    )
 
     class Meta:
         model = Lesson
         fields = [
-            'id', 'title', 'notes', 'file', 'link', 'course', 'schedule_slot',
-            'lesson_order', 'lesson_date', 'status', 'created_at', 'updated_at'
-            ,'has_homework'
+            'id', 'title', 'notes', 'file', 'file_storage_details', 'link',
+            'course', 'schedule_slot', 'lesson_order', 'lesson_date',
+            'status', 'created_at', 'updated_at', 'has_homework'
         ]
-        read_only_fields = ['id', 'created_at','lesson_order', 'updated_at','has_homework']
-
+        read_only_fields = [
+            'id', 'created_at', 'lesson_order', 'updated_at', 'has_homework'
+        ]
+    
     def get_has_homework(self, obj):
         return obj.homework_assignments_in_lessons_app.exists()
     
@@ -60,13 +74,33 @@ class LessonSerializer(serializers.ModelSerializer):
         return data
 
     def create(self, validated_data):
-        # Automatically set lesson_order if not provided
-        course = validated_data.get('course')
+        uploaded_file = validated_data.pop('file', None)
+        file_storage = None
+
+        if uploaded_file:
+            if uploaded_file.size == 0:
+                raise serializers.ValidationError(
+                    {"file": "Cannot upload an empty file."}
+                )
+            try:
+                result = upload_to_telegram(uploaded_file)
+                file_storage = FileStorage.objects.create(
+                    file=uploaded_file,
+                    telegram_file_id=result['file_id'],
+                    telegram_download_link=result['download_link'],
+                    uploaded_by=self.context['request'].user
+                )
+            except Exception as e:
+                raise serializers.ValidationError({"file": str(e)})
+
+        # auto lesson_order, etc.
         schedule_slot = validated_data.get('schedule_slot')
-        if 'lesson_order' not in validated_data or validated_data.get('lesson_order') is None:
-            last_lesson = Lesson.objects.filter(schedule_slot=schedule_slot).order_by('-lesson_order').first()
-            validated_data['lesson_order'] = (last_lesson.lesson_order + 1) if last_lesson else 1
-        return super().create(validated_data)
+        if validated_data.get('lesson_order') is None:
+            last = Lesson.objects.filter(schedule_slot=schedule_slot).order_by('-lesson_order').first()
+            validated_data['lesson_order'] = (last.lesson_order + 1) if last else 1
+
+        validated_data['file_storage'] = file_storage
+        return Lesson.objects.create(**validated_data)
     
     
 class HomeworkSerializer(serializers.ModelSerializer):
@@ -168,11 +202,6 @@ class HomeworkGradeSerializer(serializers.ModelSerializer):
                 })
         return data
 
-class FileStorageSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = FileStorage
-        fields = ['id', 'telegram_file_id', 'telegram_download_link', 'file', 'uploaded_at']
-        read_only_fields = fields
 
 class ScheduleSlotNewsSerializer(serializers.ModelSerializer):
     file_storage = serializers.PrimaryKeyRelatedField(

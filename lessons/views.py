@@ -22,7 +22,8 @@ from .serializers import PrivateLessonRequestSerializer, PrivateLessonProposedOp
 from .models import PrivateLessonRequest, PrivateLessonProposedOption
 from core.services import upload_to_telegram
 from core.models import FileStorage
-
+import logging
+logger = logging.getLogger(__name__)
 User = get_user_model()
 # Create your views here.
 
@@ -74,6 +75,7 @@ class LessonViewSet(viewsets.ModelViewSet):
         return qs
 
     def perform_create(self, serializer):
+        # The serializer already uploaded the file and filled file_storage
         serializer.save()
 
     @extend_schema(

@@ -193,11 +193,21 @@ class CourseViewSet(viewsets.ModelViewSet):
     search_fields = ['title', 'description']
     ordering_fields = ['title', 'price', 'duration', 'category']
     
+    LANG_PARAM = OpenApiParameter(
+        name='lang',
+        type=OpenApiTypes.STR,
+        location=OpenApiParameter.QUERY,
+        description='Language code to translate translatable fields (en, ar)',
+        required=False,
+        enum=['en', 'ar']          # <-- Swagger dropdown
+    )
+    
     def get_permissions(self):
         if self.action in ['create', 'update', 'partial_update', 'destroy']:
             return [IsReception()]
         return [permissions.AllowAny()]
     
+    @extend_schema(parameters=[LANG_PARAM])
     def list(self, request, *args, **kwargs):
         # Validate parameters
         if errors := self._validate_filters(request):
@@ -215,6 +225,11 @@ class CourseViewSet(viewsets.ModelViewSet):
             )
         
         return super().list(request, *args, **kwargs)
+    
+    @extend_schema(parameters=[LANG_PARAM])
+    def retrieve(self, request, *args, **kwargs):
+        return super().retrieve(request, *args, **kwargs)
+    
     
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
@@ -296,6 +311,7 @@ class CourseViewSet(viewsets.ModelViewSet):
 
     @extend_schema(
         parameters=[
+            LANG_PARAM,
             OpenApiParameter(
                 name='limit',
                 type=OpenApiTypes.INT,

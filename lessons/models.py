@@ -1,16 +1,11 @@
 from django.db import models
 from courses.models import Course,ScheduleSlot
-from django.db.models import Q
 from datetime import date, datetime
-from django.core.validators import FileExtensionValidator
 from django.contrib.auth import get_user_model
 import os
 import logging
 logger = logging.getLogger(__name__)
 User = get_user_model()
-from django.db.models.signals import post_save
-from django.dispatch import receiver
-from cloudinary_storage.storage import RawMediaCloudinaryStorage, MediaCloudinaryStorage
 
 
 # Create your models here.
@@ -20,12 +15,12 @@ class Lesson(models.Model):
     """
     title = models.CharField(max_length=200)
     notes = models.TextField(blank=True, null=True, help_text="Lesson notes and content")
-    file = models.FileField(
-        upload_to='lessons/files/',
-        blank=True,
+    file_storage = models.ForeignKey(
+        'core.FileStorage',
+        on_delete=models.SET_NULL,
         null=True,
-        validators=[FileExtensionValidator(allowed_extensions=['pdf', 'doc', 'docx', 'ppt', 'pptx', 'txt', 'zip'])],
-        help_text="Upload lesson materials (PDF, DOC, PPT, etc.)"
+        blank=True,
+        help_text="Uploaded file via Telegram"
     )
     link = models.URLField(blank=True, null=True, help_text="External link for lesson resources")
     
@@ -222,7 +217,6 @@ class ScheduleSlotNews(models.Model):
     type = models.CharField(max_length=20, choices=TYPE_CHOICES)
     title = models.CharField(max_length=255, blank=True)
     content = models.TextField(blank=True)
-    file = models.FileField(upload_to='news/files/', blank=True, null=True)
     image = models.ImageField(upload_to='news/images/', blank=True, null=True)
     related_homework = models.ForeignKey('lessons.Homework', on_delete=models.SET_NULL, null=True, blank=True)
     related_quiz = models.ForeignKey('quiz.Quiz', on_delete=models.SET_NULL, null=True, blank=True)

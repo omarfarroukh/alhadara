@@ -1,12 +1,11 @@
 from decimal import Decimal
+from unicodedata import category
 from rest_framework import serializers
 from .models import Department, CourseType, Course, Hall, ScheduleSlot, Booking, Wishlist, Enrollment
-from lessons.models import Lesson, Homework, Attendance
+from lessons.models import Lesson
 from django.core.exceptions import ValidationError
 from django.contrib.auth import get_user_model
-from django.db.models import Q, Count, Prefetch,Sum
-from django.conf import settings
-from django.utils import timezone
+from core.translation import translate_text
 import logging
 logger = logging.getLogger(__name__)
 
@@ -66,8 +65,11 @@ class HallSerializer(serializers.ModelSerializer):
         return data
     
 class CourseSerializer(serializers.ModelSerializer):
-    department_name = serializers.ReadOnlyField(source='department.name')
-    course_type_name = serializers.ReadOnlyField(source='course_type.name')
+    title            = serializers.SerializerMethodField()
+    description      = serializers.SerializerMethodField()
+    category         = serializers.SerializerMethodField()
+    department_name  = serializers.SerializerMethodField()
+    course_type_name = serializers.SerializerMethodField()
     is_in_wishlist = serializers.SerializerMethodField()
     wishlist_count = serializers.SerializerMethodField(read_only=True)
     
@@ -79,7 +81,28 @@ class CourseSerializer(serializers.ModelSerializer):
             'department_name', 'course_type', 'course_type_name', 'category',
             'is_in_wishlist', 'wishlist_count'
         )
-        
+
+    
+    def _get_lang(self):
+        return self.context["request"].GET.get("lang") or "en"
+
+    # ---------- translated fields ----------
+    def get_title(self, obj):
+        return translate_text(obj.title, self._get_lang())
+
+    def get_description(self, obj):
+        return translate_text(obj.description, self._get_lang())
+
+    def get_category(self, obj):
+        return translate_text(obj.category, self._get_lang())
+    
+    def get_department_name(self, obj):
+        return translate_text(obj.department.name, self._get_lang())
+
+    def get_course_type_name(self, obj):
+        return translate_text(obj.course_type.name, self._get_lang())
+    
+    
     def get_is_in_wishlist(self, obj):
         # Uses the prefetched current_user_wishlists
         if hasattr(obj, 'current_user_wishlists'):
