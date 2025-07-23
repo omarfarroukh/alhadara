@@ -22,6 +22,7 @@ from .serializers import (
     NewPasswordSerializer, PasswordResetRequestSerializer, ProfileImageSerializer, SecurityAnswerValidationSerializer, SecurityQuestionSerializer, SecurityAnswerSerializer, InterestSerializer, 
     ProfileSerializer, EWalletSerializer, DepositMethodSerializer, DepositRequestSerializer, AddInterestSerializer,RemoveInterestSerializer, StudyFieldSerializer, TeacherSerializer, UniversitySerializer, TransactionSerializer, NotificationSerializer
 )
+from django.conf import settings
 from rest_framework.permissions import AllowAny
 from .permissions import IsStudent,IsReception, IsAdminOrReception, IsOwnerOrAdminOrReception
 from django_ratelimit.exceptions import Ratelimited
@@ -138,7 +139,7 @@ def start_verification(request):
     token = str(uuid.uuid4())
     cache.set(f"user_verification:{token}", requested_phone, timeout=300)  # 5-minute expiry
     
-    deep_link = f"https://t.me/AlhadaraVerificationBot?start={token}"
+    deep_link = f"https://t.me/{settings.TELEGRAM_BOT_USERNAME}?start={token}"
     return Response({
         "token": token,
         "deep_link": deep_link

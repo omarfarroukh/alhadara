@@ -270,6 +270,7 @@ RQ_SHOW_ADMIN_LINK = True          # link in Django‑admin sidebar
 RQ_IGNORE_QUEUES = {"failed"}      # hide huge failed queue in dashboard
 
 TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN')
+TELEGRAM_BOT_USERNAME = os.environ.get('TELEGRAM_BOT_USERNAME')
 TELEGRAM_FILE_BOT_TOKEN = os.environ.get('TELEGRAM_FILE_BOT_TOKEN')
 TELEGRAM_FILE_CHAT_ID = os.environ.get('TELEGRAM_FILE_CHAT_ID')
 TELEGRAM_FILE_BOT_USERNAME = os.environ.get('TELEGRAM_FILE_BOT_USERNAME')
