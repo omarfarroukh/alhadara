@@ -14,7 +14,7 @@ os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'alhadara.settings')
 django.setup()
 
 from django.contrib.auth import get_user_model
-from courses.models import Course, Enrollment, Department, CourseType, Hall
+from courses.models import Course, Enrollment, Department, CourseType, Hall, ScheduleSlot
 from django.utils import timezone
 from datetime import timedelta
 
@@ -72,6 +72,66 @@ def create_test_data():
         courses.append(course)
         if created:
             print(f"Created course: {course.title} - ${course.price}")
+    
+    # Create test teachers
+    teachers = []
+    for i in range(3):
+        phone = f"teacher{i+1}"
+        teacher, created = User.objects.get_or_create(
+            phone=phone,
+            defaults={
+                "first_name": f"Teacher{i+1}",
+                "middle_name": "Subject",
+                "last_name": "Expert",
+                "user_type": "teacher",
+                "is_active": True
+            }
+        )
+        teachers.append(teacher)
+        if created:
+            print(f"Created teacher: {teacher.get_full_name()}")
+    
+    # Create schedule slots for courses
+    schedule_slots = []
+    days_options = [
+        ['mon', 'wed', 'fri'],
+        ['tue', 'thu'],
+        ['sat'],
+        ['sun']
+    ]
+    
+    time_slots = [
+        ('09:00', '11:00'),
+        ('11:30', '13:30'),
+        ('14:00', '16:00'),
+        ('16:30', '18:30')
+    ]
+    
+    for i, course in enumerate(courses):
+        # Create 1-2 schedule slots per course
+        for j in range(1, 3):
+            if i * 2 + j - 1 < len(teachers):
+                teacher = teachers[(i * 2 + j - 1) % len(teachers)]
+                days = days_options[i % len(days_options)]
+                start_time, end_time = time_slots[(i + j) % len(time_slots)]
+                
+                from datetime import datetime
+                schedule_slot, created = ScheduleSlot.objects.get_or_create(
+                    course=course,
+                    hall=hall,
+                    teacher=teacher,
+                    defaults={
+                        "days_of_week": days,
+                        "start_time": datetime.strptime(start_time, '%H:%M').time(),
+                        "end_time": datetime.strptime(end_time, '%H:%M').time(),
+                        "recurring": True,
+                        "valid_from": today,
+                        "valid_until": today + timedelta(days=90)  # 3 months
+                    }
+                )
+                schedule_slots.append(schedule_slot)
+                if created:
+                    print(f"Created schedule slot: {course.title} - {', '.join(days)} {start_time}-{end_time}")
     
     # Create test students
     students = []
@@ -131,7 +191,7 @@ def create_test_data():
             if created:
                 print(f"Created enrollment: {student.get_full_name()} -> {course.title} (${scenario['amount_paid']})")
     
-    return courses, students, enrollments
+    return courses, students, enrollments, teachers, schedule_slots
 
 def test_financial_metrics():
     """Test the financial metrics calculations"""
@@ -197,6 +257,70 @@ def test_financial_metrics():
     print(f"Revenue per Student: ${revenue_per_student:.2f}")
     print(f"Paying Students: {paying_students}")
 
+def test_schedule_metrics():
+    """Test the schedule metrics calculations"""
+    print("\n" + "="*50)
+    print("TESTING SCHEDULE METRICS")
+    print("="*50)
+    
+    from courses.models import ScheduleSlot, Hall
+    from django.db.models import Q
+    from datetime import date
+    
+    today = date.today()
+    
+    # Test active schedule slots
+    active_slots = ScheduleSlot.objects.filter(
+        valid_from__lte=today,
+        Q(valid_until__gte=today) | Q(valid_until__isnull=True)
+    )
+    
+    print(f"Total Active Schedule Slots: {active_slots.count()}")
+    
+    # Test teacher assignments
+    teachers_with_slots = active_slots.filter(teacher__isnull=False).values('teacher').distinct().count()
+    unassigned_slots = active_slots.filter(teacher__isnull=True).count()
+    
+    print(f"Teachers with Schedule Slots: {teachers_with_slots}")
+    print(f"Unassigned Teacher Slots: {unassigned_slots}")
+    
+    # Test hall utilization
+    halls_in_use = active_slots.values('hall').distinct().count()
+    total_halls = Hall.objects.count()
+    
+    print(f"Halls in Use: {halls_in_use}/{total_halls}")
+    
+    # Test today's classes
+    today_weekday = today.strftime('%a').lower()[:3]
+    todays_classes = sum(1 for slot in active_slots if today_weekday in slot.days_of_week)
+    
+    print(f"Today's Classes ({today.strftime('%A')}): {todays_classes}")
+    
+    # Test schedule by course
+    course_slots = {}
+    for slot in active_slots:
+        course_title = slot.course.title
+        if course_title not in course_slots:
+            course_slots[course_title] = 0
+        course_slots[course_title] += 1
+    
+    print("\nCourses with Schedule Slots:")
+    for course, slot_count in sorted(course_slots.items(), key=lambda x: x[1], reverse=True):
+        print(f"  {course}: {slot_count} slots")
+    
+    # Test teacher workload
+    teacher_workload = {}
+    for slot in active_slots.filter(teacher__isnull=False):
+        teacher_name = slot.teacher.get_full_name()
+        if teacher_name not in teacher_workload:
+            teacher_workload[teacher_name] = {'slots': 0, 'courses': set()}
+        teacher_workload[teacher_name]['slots'] += 1
+        teacher_workload[teacher_name]['courses'].add(slot.course.title)
+    
+    print("\nTeacher Workload:")
+    for teacher, workload in sorted(teacher_workload.items(), key=lambda x: x[1]['slots'], reverse=True):
+        print(f"  {teacher}: {workload['slots']} slots, {len(workload['courses'])} courses")
+
 def test_api_endpoints():
     """Test the API endpoints (if possible)"""
     print("\n" + "="*50)
@@ -206,6 +330,7 @@ def test_api_endpoints():
     endpoints = [
         "/api/core/dashboard/overview/",
         "/api/core/dashboard/financial/",
+        "/api/core/dashboard/schedule/",
         "/api/core/dashboard/enrollments/",
         "/api/core/dashboard/realtime-stats/"
     ]
@@ -223,10 +348,13 @@ def main():
     
     try:
         # Create test data
-        courses, students, enrollments = create_test_data()
+        courses, students, enrollments, teachers, schedule_slots = create_test_data()
         
         # Test financial metrics
         test_financial_metrics()
+        
+        # Test schedule metrics
+        test_schedule_metrics()
         
         # Show API endpoints
         test_api_endpoints()

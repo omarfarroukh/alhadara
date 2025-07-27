@@ -3,7 +3,7 @@ from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from django.contrib.auth import get_user_model
-from django.db.models import Count, Avg, Q, Sum, F
+from django.db.models import Count, Avg, Q, Sum, F, IntegerField, FloatField, Extract, Cast, Func
 from decimal import Decimal
 from django.utils import timezone
 from datetime import datetime, timedelta
@@ -551,6 +551,151 @@ class FinancialMetricsView(APIView):
         except Exception as e:
             return Response(
                 {"error": f"Failed to fetch financial metrics: {str(e)}"}, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+class ScheduleMetricsView(APIView):
+    """Get detailed schedule and lesson metrics"""
+    permission_classes = [IsAuthenticated]
+    
+    def get(self, request):
+        if not SupervisorDashboardPermission().has_permission(request, self):
+            return Response({"error": "Insufficient permissions"}, status=status.HTTP_403_FORBIDDEN)
+        
+        try:
+            from courses.models import ScheduleSlot, Hall
+            
+            now = timezone.now()
+            today = now.date()
+            week_ago = today - timedelta(days=7)
+            
+            # Active schedule slots
+            active_slots = ScheduleSlot.objects.filter(
+                valid_from__lte=today,
+                Q(valid_until__gte=today) | Q(valid_until__isnull=True)
+            ).select_related('course', 'hall', 'teacher')
+            
+            # Schedule utilization by day of week
+            day_utilization = {}
+            day_names = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun']
+            day_display = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+            
+            for i, day in enumerate(day_names):
+                slots_count = sum(1 for slot in active_slots if day in slot.days_of_week)
+                day_utilization[day_display[i]] = slots_count
+            
+            # Teacher workload analysis
+            teacher_workload = []
+            teachers = User.objects.filter(user_type='teacher')
+            for teacher in teachers:
+                teacher_slots = active_slots.filter(teacher=teacher)
+                total_hours = 0
+                
+                for slot in teacher_slots:
+                    # Calculate hours per week for this slot
+                    if slot.start_time and slot.end_time:
+                        slot_duration = (datetime.combine(today, slot.end_time) - 
+                                       datetime.combine(today, slot.start_time)).seconds / 3600
+                        weekly_hours = slot_duration * len(slot.days_of_week)
+                        total_hours += weekly_hours
+                
+                teacher_workload.append({
+                    'teacher_name': teacher.get_full_name(),
+                    'slots_count': teacher_slots.count(),
+                    'weekly_hours': round(total_hours, 1),
+                    'courses': list(teacher_slots.values_list('course__title', flat=True).distinct())
+                })
+            
+            teacher_workload.sort(key=lambda x: x['weekly_hours'], reverse=True)
+            
+            # Hall utilization analysis
+            hall_utilization = []
+            halls = Hall.objects.all()
+            for hall in halls:
+                hall_slots = active_slots.filter(hall=hall)
+                total_hours = 0
+                
+                for slot in hall_slots:
+                    if slot.start_time and slot.end_time:
+                        slot_duration = (datetime.combine(today, slot.end_time) - 
+                                       datetime.combine(today, slot.start_time)).seconds / 3600
+                        weekly_hours = slot_duration * len(slot.days_of_week)
+                        total_hours += weekly_hours
+                
+                # Calculate utilization percentage (assuming 12 hours per day, 7 days = 84 hours max)
+                max_weekly_hours = 84  # 12 hours * 7 days
+                utilization_percent = (total_hours / max_weekly_hours * 100) if max_weekly_hours > 0 else 0
+                
+                hall_utilization.append({
+                    'hall_name': hall.name,
+                    'capacity': hall.capacity,
+                    'location': hall.location,
+                    'slots_count': hall_slots.count(),
+                    'weekly_hours': round(total_hours, 1),
+                    'utilization_percent': round(utilization_percent, 1),
+                    'courses': list(hall_slots.values_list('course__title', flat=True).distinct())
+                })
+            
+            hall_utilization.sort(key=lambda x: x['utilization_percent'], reverse=True)
+            
+            # Time slot analysis
+            time_slot_usage = {}
+            for hour in range(8, 22):  # 8 AM to 10 PM
+                time_key = f"{hour:02d}:00"
+                count = 0
+                for slot in active_slots:
+                    if slot.start_time.hour <= hour < slot.end_time.hour:
+                        count += len(slot.days_of_week)
+                time_slot_usage[time_key] = count
+            
+            # Course-schedule relationship (simplified)
+            courses_with_slots = []
+            course_slot_counts = {}
+            for slot in active_slots:
+                course_title = slot.course.title
+                if course_title not in course_slot_counts:
+                    course_slot_counts[course_title] = 0
+                course_slot_counts[course_title] += 1
+            
+            # Convert to list and sort
+            courses_with_slots = [
+                {'course__title': title, 'slots_count': count}
+                for title, count in sorted(course_slot_counts.items(), key=lambda x: x[1], reverse=True)
+            ][:10]
+            
+            # Recent schedule changes
+            recent_slots = ScheduleSlot.objects.select_related('course', 'teacher', 'hall').order_by('-id')[:10]
+            recent_slots_data = [{
+                'course_title': slot.course.title,
+                'teacher_name': slot.teacher.get_full_name() if slot.teacher else 'No teacher assigned',
+                'hall_name': slot.hall.name,
+                'days': slot.days_of_week,
+                'time_range': f"{slot.start_time} - {slot.end_time}",
+                'valid_from': slot.valid_from,
+                'valid_until': slot.valid_until
+            } for slot in recent_slots]
+            
+            data = {
+                "schedule_overview": {
+                    "total_active_slots": active_slots.count(),
+                    "total_halls": Hall.objects.count(),
+                    "halls_in_use": active_slots.values('hall').distinct().count(),
+                    "teachers_scheduled": active_slots.filter(teacher__isnull=False).values('teacher').distinct().count(),
+                    "unassigned_teacher_slots": active_slots.filter(teacher__isnull=True).count()
+                },
+                "day_utilization": day_utilization,
+                "teacher_workload": teacher_workload[:10],  # Top 10 teachers by workload
+                "hall_utilization": hall_utilization,
+                "time_slot_usage": time_slot_usage,
+                "courses_with_slots": list(courses_with_slots),
+                "recent_schedule_changes": recent_slots_data
+            }
+            
+            return Response(data, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            return Response(
+                {"error": f"Failed to fetch schedule metrics: {str(e)}"}, 
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 

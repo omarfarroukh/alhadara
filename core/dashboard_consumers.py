@@ -134,16 +134,43 @@ class SupervisorDashboardConsumer(AsyncWebsocketConsumer):
             created_at__date=today
         ).count()
         
-        # Schedule Statistics
-        todays_classes = ScheduleSlot.objects.filter(
-            date=today,
-            is_active=True
-        ).count()
-        upcoming_classes = ScheduleSlot.objects.filter(
-            date__gt=today,
-            date__lte=today + timedelta(days=7),
-            is_active=True
-        ).count()
+                 # Schedule Statistics
+         # Current active schedule slots (within valid date range)
+         active_slots = ScheduleSlot.objects.filter(
+             valid_from__lte=today,
+             Q(valid_until__gte=today) | Q(valid_until__isnull=True)
+         )
+         
+         # Today's classes (check if today matches any scheduled day)
+         todays_classes = 0
+         today_weekday = today.strftime('%a').lower()[:3]  # Convert to 'mon', 'tue', etc.
+         for slot in active_slots:
+             if today_weekday in slot.days_of_week:
+                 todays_classes += 1
+         
+         # Upcoming classes this week
+         upcoming_classes = 0
+         for i in range(1, 8):  # Next 7 days
+             future_date = today + timedelta(days=i)
+             future_weekday = future_date.strftime('%a').lower()[:3]
+             for slot in active_slots:
+                 if future_weekday in slot.days_of_week and (
+                     slot.valid_until is None or slot.valid_until >= future_date
+                 ):
+                     upcoming_classes += 1
+         
+         # Schedule slot utilization
+         total_schedule_slots = ScheduleSlot.objects.count()
+         active_schedule_slots = active_slots.count()
+         
+         # Teacher workload
+         teachers_scheduled = active_slots.filter(
+             teacher__isnull=False
+         ).values('teacher').distinct().count()
+         
+         # Hall utilization
+         halls_in_use = active_slots.values('hall').distinct().count()
+         total_halls = Hall.objects.count()
         
         # Quiz Statistics
         total_quizzes = Quiz.objects.count()
@@ -322,6 +349,16 @@ class SupervisorDashboardConsumer(AsyncWebsocketConsumer):
                 "new_students": new_students_week,
                 "upcoming_classes": upcoming_classes,
                 "weekly_revenue": float(weekly_revenue)
+            },
+            "schedule_metrics": {
+                "todays_classes": todays_classes,
+                "upcoming_classes": upcoming_classes,
+                "total_schedule_slots": total_schedule_slots,
+                "active_schedule_slots": active_schedule_slots,
+                "teachers_scheduled": teachers_scheduled,
+                "halls_in_use": halls_in_use,
+                "total_halls": total_halls,
+                "hall_utilization_rate": round((halls_in_use / total_halls * 100) if total_halls > 0 else 0, 1)
             },
             "financial_metrics": {
                 "total_revenue": float(total_revenue),

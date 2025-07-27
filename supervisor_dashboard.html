@@ -277,6 +277,16 @@
                 <div class="metric-value" id="outstandingRevenue">$-</div>
                 <div class="metric-change neutral">Pending</div>
             </div>
+            <div class="metric-card">
+                <h3>Active Schedule Slots</h3>
+                <div class="metric-value" id="activeScheduleSlots">-</div>
+                <div class="metric-change neutral">Currently running</div>
+            </div>
+            <div class="metric-card">
+                <h3>Hall Utilization</h3>
+                <div class="metric-value" id="hallUtilization">-%</div>
+                <div class="metric-change neutral">Capacity used</div>
+            </div>
         </div>
 
         <!-- Alerts Section -->
@@ -314,6 +324,14 @@
             <div class="chart-card">
                 <h3>Payment Methods</h3>
                 <canvas id="paymentMethodChart" width="400" height="200"></canvas>
+            </div>
+            <div class="chart-card">
+                <h3>Daily Schedule Utilization</h3>
+                <canvas id="scheduleUtilizationChart" width="400" height="200"></canvas>
+            </div>
+            <div class="chart-card">
+                <h3>Teacher Workload</h3>
+                <canvas id="teacherWorkloadChart" width="400" height="200"></canvas>
             </div>
         </div>
 
@@ -424,12 +442,13 @@
 
                          async loadDetailedMetrics() {
                  try {
-                     const [enrollments, complaints, quizPerformance, feedback, financial] = await Promise.all([
+                     const [enrollments, complaints, quizPerformance, feedback, financial, schedule] = await Promise.all([
                          this.fetchAPI('/api/core/dashboard/enrollments/'),
                          this.fetchAPI('/api/core/dashboard/complaints/'),
                          this.fetchAPI('/api/core/dashboard/quiz-performance/'),
                          this.fetchAPI('/api/core/dashboard/feedback/'),
-                         this.fetchAPI('/api/core/dashboard/financial/')
+                         this.fetchAPI('/api/core/dashboard/financial/'),
+                         this.fetchAPI('/api/core/dashboard/schedule/')
                      ]);
 
                      this.updateEnrollmentChart(enrollments);
@@ -437,6 +456,7 @@
                      this.updateScoreChart(quizPerformance);
                      this.updateRatingChart(feedback);
                      this.updateFinancialCharts(financial);
+                     this.updateScheduleCharts(schedule);
                      
                  } catch (error) {
                      console.error('Error loading detailed metrics:', error);
@@ -484,6 +504,11 @@
 
                  if (data.alerts) {
                      this.updateAlerts(data.alerts);
+                 }
+
+                 if (data.schedule_metrics) {
+                     document.getElementById('activeScheduleSlots').textContent = data.schedule_metrics.active_schedule_slots;
+                     document.getElementById('hallUtilization').textContent = data.schedule_metrics.hall_utilization_rate + '%';
                  }
 
                  this.updateLastUpdated();
@@ -692,6 +717,77 @@
                                      label: function(context) {
                                          const method = data.payment_methods[context.dataIndex];
                                          return `${context.label}: $${method.revenue.toLocaleString()} (${method.transactions} transactions)`;
+                                     }
+                                 }
+                             }
+                         }
+                     }
+                 });
+             }
+
+             updateScheduleCharts(data) {
+                 // Update schedule utilization chart
+                 const scheduleCtx = document.getElementById('scheduleUtilizationChart').getContext('2d');
+                 
+                 if (this.charts.scheduleUtilization) {
+                     this.charts.scheduleUtilization.destroy();
+                 }
+
+                 this.charts.scheduleUtilization = new Chart(scheduleCtx, {
+                     type: 'bar',
+                     data: {
+                         labels: Object.keys(data.day_utilization),
+                         datasets: [{
+                             label: 'Classes Scheduled',
+                             data: Object.values(data.day_utilization),
+                             backgroundColor: '#8b5cf6'
+                         }]
+                     },
+                     options: {
+                         responsive: true,
+                         maintainAspectRatio: false,
+                         scales: {
+                             y: {
+                                 beginAtZero: true
+                             }
+                         }
+                     }
+                 });
+
+                 // Update teacher workload chart
+                 const teacherCtx = document.getElementById('teacherWorkloadChart').getContext('2d');
+                 
+                 if (this.charts.teacherWorkload) {
+                     this.charts.teacherWorkload.destroy();
+                 }
+
+                 // Take top 10 teachers for the chart
+                 const topTeachers = data.teacher_workload.slice(0, 10);
+
+                 this.charts.teacherWorkload = new Chart(teacherCtx, {
+                     type: 'horizontalBar',
+                     data: {
+                         labels: topTeachers.map(teacher => teacher.teacher_name.split(' ').slice(0, 2).join(' ')), // First and last name only
+                         datasets: [{
+                             label: 'Weekly Hours',
+                             data: topTeachers.map(teacher => teacher.weekly_hours),
+                             backgroundColor: '#f59e0b'
+                         }]
+                     },
+                     options: {
+                         responsive: true,
+                         maintainAspectRatio: false,
+                         scales: {
+                             x: {
+                                 beginAtZero: true
+                             }
+                         },
+                         plugins: {
+                             tooltip: {
+                                 callbacks: {
+                                     label: function(context) {
+                                         const teacher = topTeachers[context.dataIndex];
+                                         return `${teacher.teacher_name}: ${teacher.weekly_hours}h/week (${teacher.slots_count} slots)`;
                                      }
                                  }
                              }

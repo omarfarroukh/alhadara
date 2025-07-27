@@ -29,6 +29,8 @@ The dashboard uses a modern real-time architecture with:
 - **Complaint Analysis**: Charts showing complaint types and priorities
 - **Revenue Analytics**: Daily revenue trends and payment method breakdowns
 - **Financial KPIs**: Revenue per student, course profitability, outstanding payments
+- **Schedule Management**: Daily class schedules, teacher workload distribution
+- **Resource Utilization**: Hall capacity usage, teacher availability tracking
 
 ### Real-Time Alerts
 - Pending enrollments requiring attention
@@ -124,6 +126,48 @@ The dashboard uses a modern real-time architecture with:
 }
 ```
 
+### 7. Schedule & Lesson Data
+```python
+{
+    "total_active_slots": 25,
+    "todays_classes": 8,
+    "upcoming_classes": 45,
+    "teachers_scheduled": 12,
+    "halls_in_use": 5,
+    "total_halls": 8,
+    "hall_utilization_rate": 62.5,
+    "unassigned_teacher_slots": 3,
+    "day_utilization": {
+        "Monday": 12,
+        "Tuesday": 10,
+        "Wednesday": 15,
+        "Thursday": 11,
+        "Friday": 13,
+        "Saturday": 8,
+        "Sunday": 5
+    },
+    "teacher_workload": [
+        {
+            "teacher_name": "Dr. Smith Johnson",
+            "slots_count": 6,
+            "weekly_hours": 18.0,
+            "courses": ["Advanced Programming", "Data Structures"]
+        }
+    ],
+    "hall_utilization": [
+        {
+            "hall_name": "Computer Lab A",
+            "capacity": 30,
+            "location": "Building 1, Floor 2",
+            "slots_count": 8,
+            "weekly_hours": 24.0,
+            "utilization_percent": 28.6,
+            "courses": ["Programming", "Web Development"]
+        }
+    ]
+}
+```
+
 ## Implementation Files
 
 ### Backend Components
@@ -167,6 +211,7 @@ The dashboard uses a modern real-time architecture with:
 - `GET /api/core/dashboard/quiz-performance/` - Quiz performance data
 - `GET /api/core/dashboard/feedback/` - Feedback and rating metrics
 - `GET /api/core/dashboard/financial/` - Financial analytics and revenue metrics
+- `GET /api/core/dashboard/schedule/` - Schedule slots, teacher workload, and hall utilization
 
 ### Admin Actions
 - `POST /api/core/dashboard/broadcast-update/` - Trigger manual refresh
