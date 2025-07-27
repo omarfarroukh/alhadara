@@ -17,4 +17,6 @@ pytest.ini
 dockerfile
 .dockerignore
 docker-compose
+/ssl/
+
 

@@ -2,11 +2,28 @@ from django.db.models.signals import post_save,pre_save
 from django.dispatch import receiver
 from .models import Homework
 from django.db import transaction
+from channels.layers import get_channel_layer
 from quiz.models import Quiz
 from django.conf import settings
+from .models import ScheduleSlotNews
+from .serializers import ScheduleSlotNewsSerializer
+from asgiref.sync import async_to_sync
 import logging
 
 logger = logging.getLogger(__name__)
+
+channel_layer = get_channel_layer()
+
+@receiver(post_save, sender=ScheduleSlotNews)
+def announce_news(sender, instance, created, **kwargs):
+    if created:
+        group = f"slot_news_{instance.schedule_slot_id}"
+        payload = ScheduleSlotNewsSerializer(instance, context={"request": None}).data
+        async_to_sync(channel_layer.group_send)(
+            group,
+            {"type": "news_item_posted", "payload": payload}
+        )
+
 
 @receiver(post_save, sender=Homework)
 def create_homework_news_async(sender, instance, created, **kwargs):

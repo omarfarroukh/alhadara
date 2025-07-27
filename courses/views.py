@@ -2,6 +2,10 @@ from rest_framework import viewsets, permissions, filters, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework import serializers
+from django.views.decorators.cache import cache_page
+from django.utils.decorators import method_decorator
+from django.core.cache import cache
+from .cache_keys import courses_list_key, COURSES_LIST_TIMEOUT
 from django.core.exceptions import ValidationError
 from .models import Department, CourseType, Course, Hall, ScheduleSlot, Booking,Wishlist, Enrollment
 from .serializers import (
@@ -186,7 +190,7 @@ class CourseTypeViewSet(viewsets.ModelViewSet):
 
 
 class CourseViewSet(viewsets.ModelViewSet):
-    queryset = Course.objects.all().select_related('course_type')
+    queryset = Course.objects.none()
     serializer_class = CourseSerializer
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_fields = ['course_type']
@@ -208,6 +212,7 @@ class CourseViewSet(viewsets.ModelViewSet):
         return [permissions.AllowAny()]
     
     @extend_schema(parameters=[LANG_PARAM])
+    @method_decorator(cache_page(COURSES_LIST_TIMEOUT, key_prefix=courses_list_key))
     def list(self, request, *args, **kwargs):
         # Validate parameters
         if errors := self._validate_filters(request):
