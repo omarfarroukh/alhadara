@@ -1,7 +1,8 @@
 from channels.generic.websocket import AsyncWebsocketConsumer
 from channels.db import database_sync_to_async
 from django.contrib.auth import get_user_model
-from django.db.models import Count, Avg, Q
+from django.db.models import Count, Avg, Q, Sum, F
+from decimal import Decimal
 from django.utils import timezone
 from datetime import datetime, timedelta
 import json
@@ -183,7 +184,85 @@ class SupervisorDashboardConsumer(AsyncWebsocketConsumer):
             status__in=['submitted', 'in_review']
         ).count()
         
-        # Revenue/Financial (if loyalty points can indicate revenue)
+        # Financial Metrics
+        try:
+            from core.models import Transaction, EWallet
+            
+            # Revenue calculations
+            total_revenue = Enrollment.objects.filter(
+                payment_status__in=['paid', 'partial']
+            ).aggregate(
+                total=Sum('amount_paid')
+            )['total'] or Decimal('0.00')
+            
+            todays_revenue = Enrollment.objects.filter(
+                updated_at__date=today,
+                payment_status__in=['paid', 'partial']
+            ).aggregate(
+                total=Sum('amount_paid')
+            )['total'] or Decimal('0.00')
+            
+            # Weekly revenue
+            weekly_revenue = Enrollment.objects.filter(
+                updated_at__gte=week_ago,
+                payment_status__in=['paid', 'partial']
+            ).aggregate(
+                total=Sum('amount_paid')
+            )['total'] or Decimal('0.00')
+            
+            # Outstanding payments
+            outstanding_revenue = Enrollment.objects.filter(
+                status='active',
+                payment_status='partial'
+            ).aggregate(
+                total=Sum(
+                    F('course__price') - F('amount_paid')
+                )
+            )['total'] or Decimal('0.00')
+            
+            # Payment method statistics
+            ewallet_payments = Enrollment.objects.filter(
+                payment_method='ewallet',
+                payment_status__in=['paid', 'partial']
+            ).aggregate(
+                total=Sum('amount_paid')
+            )['total'] or Decimal('0.00')
+            
+            cash_payments = Enrollment.objects.filter(
+                payment_method='cash',
+                payment_status__in=['paid', 'partial']
+            ).aggregate(
+                total=Sum('amount_paid')
+            )['total'] or Decimal('0.00')
+            
+            # Course revenue breakdown
+            top_revenue_courses = Enrollment.objects.filter(
+                payment_status__in=['paid', 'partial']
+            ).values('course__title').annotate(
+                revenue=Sum('amount_paid'),
+                enrollments=Count('id')
+            ).order_by('-revenue')[:5]
+            
+            # Average course price
+            avg_course_price = Course.objects.aggregate(
+                avg_price=Avg('price')
+            )['avg_price'] or Decimal('0.00')
+            
+            # Revenue per student
+            paying_students = Enrollment.objects.filter(
+                payment_status__in=['paid', 'partial']
+            ).values('student').distinct().count()
+            
+            revenue_per_student = total_revenue / paying_students if paying_students > 0 else Decimal('0.00')
+            
+        except Exception as e:
+            logger.error(f"Error calculating financial metrics: {e}")
+            total_revenue = todays_revenue = weekly_revenue = outstanding_revenue = Decimal('0.00')
+            ewallet_payments = cash_payments = avg_course_price = revenue_per_student = Decimal('0.00')
+            top_revenue_courses = []
+            paying_students = 0
+        
+        # Loyalty Points (if available)
         try:
             total_loyalty_points = LoyaltyPoint.objects.aggregate(
                 total=Count('id')
@@ -223,7 +302,8 @@ class SupervisorDashboardConsumer(AsyncWebsocketConsumer):
                 "todays_classes": todays_classes,
                 "quiz_attempts": quiz_attempts_today,
                 "new_complaints": new_complaints_today,
-                "points_earned": points_earned_today
+                "points_earned": points_earned_today,
+                "todays_revenue": float(todays_revenue)
             },
             "pending_actions": {
                 "pending_enrollments": pending_enrollments,
@@ -240,7 +320,20 @@ class SupervisorDashboardConsumer(AsyncWebsocketConsumer):
             },
             "weekly_trends": {
                 "new_students": new_students_week,
-                "upcoming_classes": upcoming_classes
+                "upcoming_classes": upcoming_classes,
+                "weekly_revenue": float(weekly_revenue)
+            },
+            "financial_metrics": {
+                "total_revenue": float(total_revenue),
+                "todays_revenue": float(todays_revenue),
+                "weekly_revenue": float(weekly_revenue),
+                "outstanding_revenue": float(outstanding_revenue),
+                "ewallet_payments": float(ewallet_payments),
+                "cash_payments": float(cash_payments),
+                "avg_course_price": float(avg_course_price),
+                "revenue_per_student": float(revenue_per_student),
+                "paying_students": paying_students,
+                "top_revenue_courses": list(top_revenue_courses)
             },
             "system_status": {
                 "total_complaints": total_complaints,

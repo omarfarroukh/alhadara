@@ -19,6 +19,7 @@ The dashboard uses a modern real-time architecture with:
 - **User Statistics**: Total users, active students, new registrations
 - **Course Analytics**: Course enrollments, active courses, schedule slots
 - **Performance Metrics**: Quiz scores, completion rates, feedback ratings
+- **Financial Analytics**: Revenue tracking, payment methods, outstanding balances
 - **System Health**: Pending actions, complaints, unverified users
 
 ### Live Data Visualization
@@ -26,6 +27,8 @@ The dashboard uses a modern real-time architecture with:
 - **Quiz Performance**: Bar charts for score distributions
 - **Feedback Trends**: Line charts for rating trends over time
 - **Complaint Analysis**: Charts showing complaint types and priorities
+- **Revenue Analytics**: Daily revenue trends and payment method breakdowns
+- **Financial KPIs**: Revenue per student, course profitability, outstanding payments
 
 ### Real-Time Alerts
 - Pending enrollments requiring attention
@@ -94,6 +97,33 @@ The dashboard uses a modern real-time architecture with:
 }
 ```
 
+### 6. Financial Analytics Data
+```python
+{
+    "total_revenue": 125000.00,
+    "todays_revenue": 1250.00,
+    "weekly_revenue": 8750.00,
+    "outstanding_revenue": 2500.00,
+    "ewallet_payments": 95000.00,
+    "cash_payments": 30000.00,
+    "avg_course_price": 250.00,
+    "revenue_per_student": 189.50,
+    "paying_students": 658,
+    "top_revenue_courses": [
+        {"course__title": "Advanced Programming", "revenue": 15000, "enrollments": 60},
+        {"course__title": "Data Science Basics", "revenue": 12500, "enrollments": 50}
+    ],
+    "payment_methods": [
+        {"method": "ewallet", "revenue": 95000, "transactions": 380},
+        {"method": "cash", "revenue": 30000, "transactions": 120}
+    ],
+    "daily_revenue": [
+        {"date": "2024-01-15", "revenue": 1250.00},
+        {"date": "2024-01-14", "revenue": 1875.00}
+    ]
+}
+```
+
 ## Implementation Files
 
 ### Backend Components
@@ -136,6 +166,7 @@ The dashboard uses a modern real-time architecture with:
 - `GET /api/core/dashboard/complaints/` - Complaint statistics
 - `GET /api/core/dashboard/quiz-performance/` - Quiz performance data
 - `GET /api/core/dashboard/feedback/` - Feedback and rating metrics
+- `GET /api/core/dashboard/financial/` - Financial analytics and revenue metrics
 
 ### Admin Actions
 - `POST /api/core/dashboard/broadcast-update/` - Trigger manual refresh

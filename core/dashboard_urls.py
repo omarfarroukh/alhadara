@@ -5,6 +5,7 @@ from .dashboard_views import (
     ComplaintsMetricsView,
     QuizPerformanceView,
     FeedbackMetricsView,
+    FinancialMetricsView,
     RealTimeStatsView,
     BroadcastUpdateView
 )
@@ -20,6 +21,7 @@ urlpatterns = [
     path('complaints/', ComplaintsMetricsView.as_view(), name='complaints'),
     path('quiz-performance/', QuizPerformanceView.as_view(), name='quiz_performance'),
     path('feedback/', FeedbackMetricsView.as_view(), name='feedback'),
+    path('financial/', FinancialMetricsView.as_view(), name='financial'),
     
     # Real-time data
     path('realtime-stats/', RealTimeStatsView.as_view(), name='realtime_stats'),

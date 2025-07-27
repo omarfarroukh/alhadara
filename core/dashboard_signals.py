@@ -47,6 +47,12 @@ def user_created_updated(sender, instance, created, **kwargs):
 def enrollment_created_updated(sender, instance, created, **kwargs):
     """Trigger dashboard update when enrollment is created or updated"""
     event_type = "enrollment_created" if created else "enrollment_updated"
+    
+    # Check if this is a payment update
+    if not created and hasattr(instance, '_previous_amount_paid'):
+        if instance.amount_paid != instance._previous_amount_paid:
+            event_type = "payment_received"
+    
     broadcast_dashboard_update(event_type, "Enrollment", instance.id)
 
 @receiver(post_delete, sender='courses.Enrollment')
@@ -93,6 +99,18 @@ def schedule_slot_created_updated(sender, instance, created, **kwargs):
     """Trigger dashboard update when schedule slot is created or updated"""
     event_type = "schedule_slot_created" if created else "schedule_slot_updated"
     broadcast_dashboard_update(event_type, "ScheduleSlot", instance.id)
+
+# Transaction signals
+try:
+    @receiver(post_save, sender='core.Transaction')
+    def transaction_created_updated(sender, instance, created, **kwargs):
+        """Trigger dashboard update when transaction is created or updated"""
+        if instance.transaction_type == 'course_payment':
+            event_type = "payment_transaction_created" if created else "payment_transaction_updated"
+            broadcast_dashboard_update(event_type, "Transaction", instance.id)
+except:
+    logger.warning("Transaction model not found - signal not registered")
+    pass
 
 # Loyalty points signals (if available)
 try:

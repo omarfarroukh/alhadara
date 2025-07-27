@@ -262,6 +262,21 @@
                 <div class="metric-value" id="onlineUsers">-</div>
                 <div class="metric-change neutral">Last 15 minutes</div>
             </div>
+            <div class="metric-card">
+                <h3>Total Revenue</h3>
+                <div class="metric-value" id="totalRevenue">$-</div>
+                <div class="metric-change neutral">All time</div>
+            </div>
+            <div class="metric-card">
+                <h3>Today's Revenue</h3>
+                <div class="metric-value" id="todaysRevenue">$-</div>
+                <div class="metric-change" id="revenueChange">Loading...</div>
+            </div>
+            <div class="metric-card">
+                <h3>Outstanding Payments</h3>
+                <div class="metric-value" id="outstandingRevenue">$-</div>
+                <div class="metric-change neutral">Pending</div>
+            </div>
         </div>
 
         <!-- Alerts Section -->
@@ -291,6 +306,14 @@
             <div class="chart-card">
                 <h3>Complaints by Type</h3>
                 <canvas id="complaintsChart" width="400" height="200"></canvas>
+            </div>
+            <div class="chart-card">
+                <h3>Daily Revenue (7 Days)</h3>
+                <canvas id="revenueChart" width="400" height="200"></canvas>
+            </div>
+            <div class="chart-card">
+                <h3>Payment Methods</h3>
+                <canvas id="paymentMethodChart" width="400" height="200"></canvas>
             </div>
         </div>
 
@@ -399,24 +422,26 @@
                 }
             }
 
-            async loadDetailedMetrics() {
-                try {
-                    const [enrollments, complaints, quizPerformance, feedback] = await Promise.all([
-                        this.fetchAPI('/api/core/dashboard/enrollments/'),
-                        this.fetchAPI('/api/core/dashboard/complaints/'),
-                        this.fetchAPI('/api/core/dashboard/quiz-performance/'),
-                        this.fetchAPI('/api/core/dashboard/feedback/')
-                    ]);
+                         async loadDetailedMetrics() {
+                 try {
+                     const [enrollments, complaints, quizPerformance, feedback, financial] = await Promise.all([
+                         this.fetchAPI('/api/core/dashboard/enrollments/'),
+                         this.fetchAPI('/api/core/dashboard/complaints/'),
+                         this.fetchAPI('/api/core/dashboard/quiz-performance/'),
+                         this.fetchAPI('/api/core/dashboard/feedback/'),
+                         this.fetchAPI('/api/core/dashboard/financial/')
+                     ]);
 
-                    this.updateEnrollmentChart(enrollments);
-                    this.updateComplaintsChart(complaints);
-                    this.updateScoreChart(quizPerformance);
-                    this.updateRatingChart(feedback);
-                    
-                } catch (error) {
-                    console.error('Error loading detailed metrics:', error);
-                }
-            }
+                     this.updateEnrollmentChart(enrollments);
+                     this.updateComplaintsChart(complaints);
+                     this.updateScoreChart(quizPerformance);
+                     this.updateRatingChart(feedback);
+                     this.updateFinancialCharts(financial);
+                     
+                 } catch (error) {
+                     console.error('Error loading detailed metrics:', error);
+                 }
+             }
 
             async fetchAPI(endpoint) {
                 const response = await fetch(endpoint, {
@@ -433,24 +458,43 @@
                 return await response.json();
             }
 
-            updateDashboard(data) {
-                if (data.overview) {
-                    document.getElementById('totalUsers').textContent = data.overview.total_users;
-                    document.getElementById('activeStudents').textContent = data.overview.active_students;
-                    document.getElementById('totalEnrollments').textContent = data.overview.total_enrollments;
-                }
+                         updateDashboard(data) {
+                 if (data.overview) {
+                     document.getElementById('totalUsers').textContent = data.overview.total_users;
+                     document.getElementById('activeStudents').textContent = data.overview.active_students;
+                     document.getElementById('totalEnrollments').textContent = data.overview.total_enrollments;
+                     
+                     // Financial metrics
+                     if (data.overview.total_revenue !== undefined) {
+                         document.getElementById('totalRevenue').textContent = '$' + this.formatNumber(data.overview.total_revenue);
+                     }
+                     if (data.overview.outstanding_revenue !== undefined) {
+                         document.getElementById('outstandingRevenue').textContent = '$' + this.formatNumber(data.overview.outstanding_revenue);
+                     }
+                 }
 
-                if (data.today) {
-                    document.getElementById('todaysClasses').textContent = data.today.classes_scheduled;
-                    document.getElementById('quizAttempts').textContent = data.today.quiz_attempts;
-                }
+                 if (data.today) {
+                     document.getElementById('todaysClasses').textContent = data.today.classes_scheduled;
+                     document.getElementById('quizAttempts').textContent = data.today.quiz_attempts;
+                     
+                     if (data.today.todays_revenue !== undefined) {
+                         document.getElementById('todaysRevenue').textContent = '$' + this.formatNumber(data.today.todays_revenue);
+                     }
+                 }
 
-                if (data.alerts) {
-                    this.updateAlerts(data.alerts);
-                }
+                 if (data.alerts) {
+                     this.updateAlerts(data.alerts);
+                 }
 
-                this.updateLastUpdated();
-            }
+                 this.updateLastUpdated();
+             }
+
+             formatNumber(num) {
+                 return new Intl.NumberFormat('en-US', {
+                     minimumFractionDigits: 2,
+                     maximumFractionDigits: 2
+                 }).format(num);
+             }
 
             updateAlerts(alerts) {
                 const alertsList = document.getElementById('alertsList');
@@ -563,28 +607,98 @@
                 });
             }
 
-            updateComplaintsChart(data) {
-                const ctx = document.getElementById('complaintsChart').getContext('2d');
-                
-                if (this.charts.complaints) {
-                    this.charts.complaints.destroy();
-                }
+                         updateComplaintsChart(data) {
+                 const ctx = document.getElementById('complaintsChart').getContext('2d');
+                 
+                 if (this.charts.complaints) {
+                     this.charts.complaints.destroy();
+                 }
 
-                this.charts.complaints = new Chart(ctx, {
-                    type: 'pie',
-                    data: {
-                        labels: data.by_type.map(item => item.type),
-                        datasets: [{
-                            data: data.by_type.map(item => item.count),
-                            backgroundColor: ['#667eea', '#764ba2', '#f093fb', '#f5576c', '#4facfe']
-                        }]
-                    },
-                    options: {
-                        responsive: true,
-                        maintainAspectRatio: false
-                    }
-                });
-            }
+                 this.charts.complaints = new Chart(ctx, {
+                     type: 'pie',
+                     data: {
+                         labels: data.by_type.map(item => item.type),
+                         datasets: [{
+                             data: data.by_type.map(item => item.count),
+                             backgroundColor: ['#667eea', '#764ba2', '#f093fb', '#f5576c', '#4facfe']
+                         }]
+                     },
+                     options: {
+                         responsive: true,
+                         maintainAspectRatio: false
+                     }
+                 });
+             }
+
+             updateFinancialCharts(data) {
+                 // Update revenue chart
+                 const revenueCtx = document.getElementById('revenueChart').getContext('2d');
+                 
+                 if (this.charts.revenue) {
+                     this.charts.revenue.destroy();
+                 }
+
+                 this.charts.revenue = new Chart(revenueCtx, {
+                     type: 'line',
+                     data: {
+                         labels: data.daily_revenue.map(item => new Date(item.date).toLocaleDateString()),
+                         datasets: [{
+                             label: 'Daily Revenue',
+                             data: data.daily_revenue.map(item => item.revenue),
+                             borderColor: '#10b981',
+                             backgroundColor: 'rgba(16, 185, 129, 0.1)',
+                             tension: 0.4,
+                             fill: true
+                         }]
+                     },
+                     options: {
+                         responsive: true,
+                         maintainAspectRatio: false,
+                         scales: {
+                             y: {
+                                 beginAtZero: true,
+                                 ticks: {
+                                     callback: function(value) {
+                                         return '$' + value.toLocaleString();
+                                     }
+                                 }
+                             }
+                         }
+                     }
+                 });
+
+                 // Update payment methods chart
+                 const paymentCtx = document.getElementById('paymentMethodChart').getContext('2d');
+                 
+                 if (this.charts.paymentMethods) {
+                     this.charts.paymentMethods.destroy();
+                 }
+
+                 this.charts.paymentMethods = new Chart(paymentCtx, {
+                     type: 'doughnut',
+                     data: {
+                         labels: data.payment_methods.map(item => item.method.charAt(0).toUpperCase() + item.method.slice(1)),
+                         datasets: [{
+                             data: data.payment_methods.map(item => item.revenue),
+                             backgroundColor: ['#667eea', '#f59e0b']
+                         }]
+                     },
+                     options: {
+                         responsive: true,
+                         maintainAspectRatio: false,
+                         plugins: {
+                             tooltip: {
+                                 callbacks: {
+                                     label: function(context) {
+                                         const method = data.payment_methods[context.dataIndex];
+                                         return `${context.label}: $${method.revenue.toLocaleString()} (${method.transactions} transactions)`;
+                                     }
+                                 }
+                             }
+                         }
+                     }
+                 });
+             }
 
             updateLastUpdated(timestamp) {
                 const lastUpdated = document.getElementById('lastUpdated');

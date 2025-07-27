@@ -3,7 +3,8 @@ from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from django.contrib.auth import get_user_model
-from django.db.models import Count, Avg, Q, Sum
+from django.db.models import Count, Avg, Q, Sum, F
+from decimal import Decimal
 from django.utils import timezone
 from datetime import datetime, timedelta
 from channels.layers import get_channel_layer
@@ -41,20 +42,39 @@ class DashboardOverviewView(APIView):
             today = now.date()
             week_ago = today - timedelta(days=7)
             
-            # Get comprehensive metrics
-            data = {
-                "overview": {
-                    "total_users": User.objects.count(),
-                    "active_students": User.objects.filter(
-                        user_type='student', 
-                        is_active=True,
-                        last_login__gte=week_ago
-                    ).count(),
-                    "total_courses": Course.objects.count(),
-                    "active_courses": Course.objects.filter(is_active=True).count(),
-                    "total_enrollments": Enrollment.objects.count(),
-                    "active_enrollments": Enrollment.objects.filter(status='active').count(),
-                },
+                         # Financial metrics for overview
+             total_revenue = Enrollment.objects.filter(
+                 payment_status__in=['paid', 'partial']
+             ).aggregate(total=Sum('amount_paid'))['total'] or Decimal('0.00')
+             
+             todays_revenue = Enrollment.objects.filter(
+                 updated_at__date=today,
+                 payment_status__in=['paid', 'partial']
+             ).aggregate(total=Sum('amount_paid'))['total'] or Decimal('0.00')
+             
+             outstanding_revenue = Enrollment.objects.filter(
+                 status='active',
+                 payment_status='partial'
+             ).aggregate(
+                 total=Sum(F('course__price') - F('amount_paid'))
+             )['total'] or Decimal('0.00')
+             
+             # Get comprehensive metrics
+             data = {
+                 "overview": {
+                     "total_users": User.objects.count(),
+                     "active_students": User.objects.filter(
+                         user_type='student', 
+                         is_active=True,
+                         last_login__gte=week_ago
+                     ).count(),
+                     "total_courses": Course.objects.count(),
+                     "active_courses": Course.objects.filter(is_active=True).count(),
+                     "total_enrollments": Enrollment.objects.count(),
+                     "active_enrollments": Enrollment.objects.filter(status='active').count(),
+                     "total_revenue": float(total_revenue),
+                     "outstanding_revenue": float(outstanding_revenue)
+                 },
                 "alerts": {
                     "pending_enrollments": Enrollment.objects.filter(status='pending').count(),
                     "pending_complaints": Complaint.objects.filter(
@@ -84,10 +104,11 @@ class DashboardOverviewView(APIView):
                     "quiz_attempts": QuizAttempt.objects.filter(
                         started_at__date=today
                     ).count(),
-                    "new_complaints": Complaint.objects.filter(
-                        created_at__date=today
-                    ).count(),
-                }
+                                         "new_complaints": Complaint.objects.filter(
+                         created_at__date=today
+                     ).count(),
+                     "todays_revenue": float(todays_revenue)
+                 }
             }
             
             return Response(data, status=status.HTTP_200_OK)
@@ -381,6 +402,155 @@ class RealTimeStatsView(APIView):
         except Exception as e:
             return Response(
                 {"error": f"Failed to fetch real-time stats: {str(e)}"}, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+class FinancialMetricsView(APIView):
+    """Get detailed financial metrics and analytics"""
+    permission_classes = [IsAuthenticated]
+    
+    def get(self, request):
+        if not SupervisorDashboardPermission().has_permission(request, self):
+            return Response({"error": "Insufficient permissions"}, status=status.HTTP_403_FORBIDDEN)
+        
+        try:
+            from courses.models import Enrollment, Course
+            from core.models import Transaction, EWallet
+            
+            now = timezone.now()
+            today = now.date()
+            week_ago = today - timedelta(days=7)
+            month_ago = today - timedelta(days=30)
+            
+            # Revenue Analytics
+            total_revenue = Enrollment.objects.filter(
+                payment_status__in=['paid', 'partial']
+            ).aggregate(total=Sum('amount_paid'))['total'] or Decimal('0.00')
+            
+            # Daily revenue for the last 7 days
+            daily_revenue = []
+            for i in range(7):
+                date = today - timedelta(days=i)
+                day_revenue = Enrollment.objects.filter(
+                    updated_at__date=date,
+                    payment_status__in=['paid', 'partial']
+                ).aggregate(total=Sum('amount_paid'))['total'] or Decimal('0.00')
+                daily_revenue.append({
+                    'date': date,
+                    'revenue': float(day_revenue)
+                })
+            
+            # Payment method breakdown
+            payment_methods = []
+            for method in ['ewallet', 'cash']:
+                method_revenue = Enrollment.objects.filter(
+                    payment_method=method,
+                    payment_status__in=['paid', 'partial']
+                ).aggregate(total=Sum('amount_paid'))['total'] or Decimal('0.00')
+                
+                method_count = Enrollment.objects.filter(
+                    payment_method=method,
+                    payment_status__in=['paid', 'partial']
+                ).count()
+                
+                payment_methods.append({
+                    'method': method,
+                    'revenue': float(method_revenue),
+                    'transactions': method_count
+                })
+            
+            # Course revenue ranking
+            course_revenue = Enrollment.objects.filter(
+                payment_status__in=['paid', 'partial']
+            ).values('course__title', 'course__price').annotate(
+                revenue=Sum('amount_paid'),
+                enrollments=Count('id'),
+                completion_rate=Count('id', filter=Q(status='completed')) * 100.0 / Count('id')
+            ).order_by('-revenue')[:10]
+            
+            # Outstanding payments analysis
+            outstanding_payments = Enrollment.objects.filter(
+                status='active',
+                payment_status='partial'
+            ).annotate(
+                outstanding=F('course__price') - F('amount_paid')
+            ).aggregate(
+                total_outstanding=Sum('outstanding'),
+                count=Count('id')
+            )
+            
+            # Revenue by course category
+            category_revenue = Enrollment.objects.filter(
+                payment_status__in=['paid', 'partial']
+            ).values('course__category').annotate(
+                revenue=Sum('amount_paid'),
+                enrollments=Count('id')
+            ).order_by('-revenue')
+            
+            # Average metrics
+            avg_enrollment_value = Enrollment.objects.filter(
+                payment_status__in=['paid', 'partial']
+            ).aggregate(avg=Avg('amount_paid'))['avg'] or Decimal('0.00')
+            
+            # Revenue trends (monthly)
+            monthly_revenue = []
+            for i in range(6):
+                month_start = (today.replace(day=1) - timedelta(days=i*30)).replace(day=1)
+                next_month = (month_start + timedelta(days=32)).replace(day=1)
+                
+                month_rev = Enrollment.objects.filter(
+                    updated_at__date__gte=month_start,
+                    updated_at__date__lt=next_month,
+                    payment_status__in=['paid', 'partial']
+                ).aggregate(total=Sum('amount_paid'))['total'] or Decimal('0.00')
+                
+                monthly_revenue.append({
+                    'month': month_start.strftime('%Y-%m'),
+                    'revenue': float(month_rev)
+                })
+            
+            # Transaction volume metrics
+            try:
+                transaction_stats = Transaction.objects.filter(
+                    created_at__gte=month_ago,
+                    transaction_type='course_payment',
+                    status='completed'
+                ).aggregate(
+                    total_amount=Sum('amount'),
+                    total_count=Count('id'),
+                    avg_amount=Avg('amount')
+                )
+            except:
+                transaction_stats = {
+                    'total_amount': Decimal('0.00'),
+                    'total_count': 0,
+                    'avg_amount': Decimal('0.00')
+                }
+            
+            data = {
+                "revenue_summary": {
+                    "total_revenue": float(total_revenue),
+                    "avg_enrollment_value": float(avg_enrollment_value),
+                    "outstanding_amount": float(outstanding_payments['total_outstanding'] or 0),
+                    "outstanding_count": outstanding_payments['count'] or 0
+                },
+                "daily_revenue": daily_revenue[::-1],  # Reverse to show oldest first
+                "monthly_trends": monthly_revenue[::-1],
+                "payment_methods": payment_methods,
+                "top_courses_by_revenue": list(course_revenue),
+                "revenue_by_category": list(category_revenue),
+                "transaction_volume": {
+                    "total_amount": float(transaction_stats['total_amount'] or 0),
+                    "total_transactions": transaction_stats['total_count'] or 0,
+                    "avg_transaction": float(transaction_stats['avg_amount'] or 0)
+                }
+            }
+            
+            return Response(data, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            return Response(
+                {"error": f"Failed to fetch financial metrics: {str(e)}"}, 
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
