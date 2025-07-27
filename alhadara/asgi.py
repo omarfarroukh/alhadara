@@ -10,11 +10,13 @@ django.setup()          # <── important
 # Now it is safe to import consumers that touch models
 from lessons.consumers import NewsFeedConsumer
 from core.consumers import NotificationConsumer
+from core.dashboard_consumers import SupervisorDashboardConsumer
 from core.middleware import JWTAuthMiddleware
 
 websocket_urlpatterns = [
     re_path(r'^ws/notifications/$', NotificationConsumer.as_asgi()),
     re_path(r'^ws/news/(?P<slot_id>\d+)/$', NewsFeedConsumer.as_asgi()),
+    re_path(r'^ws/dashboard/supervisor/$', SupervisorDashboardConsumer.as_asgi()),
 ]
 
 application = ProtocolTypeRouter({

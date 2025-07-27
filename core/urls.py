@@ -32,6 +32,10 @@ urlpatterns = [
     path('profile/me/', UserProfileView.as_view(), name='user-profile'),
     path('auth/verify/start/', start_verification, name='start-verification'),
     path('auth/verify/submit/', verify_pin, name='verify-pin'),
+    
+    # Dashboard endpoints
+    path('dashboard/', include('core.dashboard_urls')),
+    
     # Router URLs
     path('', include(router.urls)),
 ]
