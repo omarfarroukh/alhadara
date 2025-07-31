@@ -4,13 +4,16 @@ from rest_framework.response import Response
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from django.db.models import Q, Count, Avg
+from django.core.files.storage import default_storage
 from django_filters.rest_framework import DjangoFilterBackend
+from django_rq import enqueue
 from drf_spectacular.utils import extend_schema, OpenApiParameter,extend_schema_view
 from drf_spectacular.types import OpenApiTypes
-
+from .tasks import generate_questions_for_quiz
+from rest_framework.parsers import MultiPartParser
 from .models import Quiz, Question, Choice, QuizAttempt, QuizAnswer
 from .serializers import (
-    QuizBulkSubmitSerializer, QuizSerializer, QuizDetailSerializer, QuizCreateSerializer,
+    AutoGenQuestionsSerializer, QuizBulkSubmitSerializer, QuizSerializer, QuizDetailSerializer, QuizCreateSerializer,
     QuestionCreateSerializer, QuizAttemptSerializer, QuizAnswerSerializer,
     QuizAnswerSubmitSerializer, QuizStartSerializer, QuizSubmitSerializer,
     QuizResultSerializer, QuestionSerializer
@@ -255,6 +258,40 @@ class QuizViewSet(viewsets.ModelViewSet):
         }
         
         return Response(response_data)
+    
+    @extend_schema(
+        summary="Queue MCQ/TF generation (RQ job)",
+        description="Upload any file → returns job id. Poll GET /api/jobs/{id}/",
+        request={"multipart/form-data": AutoGenQuestionsSerializer},
+        responses={202: {"type": "object", "properties": {"job_id": {"type": "string"}}}},
+    )
+    @action(
+        detail=True,
+        methods=["post"],
+        url_path="auto-generate-questions",
+        parser_classes=[MultiPartParser],
+    )
+    def auto_generate_questions(self, request, pk=None):
+        serializer = AutoGenQuestionsSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+
+        # save file temporarily
+        file_path = default_storage.save(
+            f"tmp/{data['file'].name}", data["file"]
+        )
+
+        # enqueue RQ job
+        job = enqueue(
+            generate_questions_for_quiz,
+            quiz_id=self.get_object().id,
+            file_path=file_path,
+            num_questions=data["num_questions"],
+            difficulty=data["difficulty"],
+        )
+
+        return Response({"job_id": job.id}, status=status.HTTP_202_ACCEPTED)
+    
 
 class QuestionViewSet(viewsets.ModelViewSet):
     """ViewSet for managing quiz questions"""

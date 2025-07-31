@@ -510,6 +510,10 @@ class Notification(models.Model):
         ('enrollment_cancellation','Enrollment Cancelation'),
         ('course_payment','Course Payment'),
         ('course_starting',' Course Starting'),
+        ('ewallet_withdrawal', 'eWallet Withdrawal'),
+        ('ewallet_transfer_sent', 'eWallet Transfer Sent'),
+        ('ewallet_transfer_received', 'eWallet Transfer Received'),
+        ('password_changed', 'Password Changed'),
     )
     
     recipient = models.ForeignKey(User, on_delete=models.CASCADE, related_name='notifications')

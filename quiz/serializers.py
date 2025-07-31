@@ -36,6 +36,22 @@ class QuestionSerializer(serializers.ModelSerializer):
     def get_related_lessons(self, obj):
         return [{'id': l.id, 'title': l.title} for l in obj.related_lessons.all()]
 
+class ChoiceWithAnswerSerializer(serializers.ModelSerializer):
+    """Choice serializer that includes correct answers - for teachers/admins"""
+    class Meta:
+        model = Choice
+        fields = ['id', 'text', 'order', 'is_correct']  # <- Added 'is_correct'
+        
+class QuestionWithAnswersSerializer(QuestionSerializer):
+    """Question serializer with correct answers - for teachers/admins"""
+    choices = ChoiceWithAnswerSerializer(many=True, read_only=True)  # <- Uses new serializer
+    related_lessons = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = Question
+        fields = ['id', 'text', 'question_type', 'points', 'order', 'is_required', 'choices', 'related_lessons']
+
+
 class QuizSerializer(serializers.ModelSerializer):
     course = CourseSerializer(read_only=True)
     schedule_slot = ScheduleSlotSerializer(read_only=True)
@@ -83,6 +99,23 @@ class QuizDetailSerializer(QuizSerializer):
     
     class Meta(QuizSerializer.Meta):
         fields = QuizSerializer.Meta.fields + ['questions']
+        
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        
+        # Check if user is teacher/admin to show correct answers
+        request = self.context.get('request')
+        if request and request.user.is_authenticated:
+            user_type = getattr(request.user, 'user_type', None)
+            if user_type in ['teacher', 'admin', 'reception']:
+                # Use serializer with correct answers for staff
+                self.fields['questions'] = QuestionWithAnswersSerializer(many=True, read_only=True)
+            else:
+                # Use regular serializer for students
+                self.fields['questions'] = QuestionSerializer(many=True, read_only=True)
+        else:
+            # Default to no answers for unauthenticated users
+            self.fields['questions'] = QuestionSerializer(many=True, read_only=True)
 
 class QuizCreateSerializer(serializers.ModelSerializer):
     """Serializer for creating quizzes"""
@@ -406,3 +439,8 @@ class QuizBulkSubmitSerializer(QuizSubmitSerializer):
             raise serializers.ValidationError("Quiz attempt not found")
         
         return data
+    
+class AutoGenQuestionsSerializer(serializers.Serializer):
+    file = serializers.FileField()
+    num_questions = serializers.IntegerField(min_value=1, max_value=50, default=5)
+    difficulty = serializers.ChoiceField(choices=["easy", "medium", "hard"], default="medium")

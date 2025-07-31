@@ -2,7 +2,7 @@ from django.urls import path, include
 from rest_framework.routers import DefaultRouter
 from rest_framework_simplejwt.views import TokenRefreshView, TokenVerifyView
 from .views import (
-    PasswordResetViewSet, ProfileImageViewSet, SecurityQuestionViewSet, SecurityAnswerViewSet, InterestViewSet, TeacherViewSet,UserProfileView,
+    JobStatusView, PasswordResetViewSet, ProfileImageViewSet, SecurityQuestionViewSet, SecurityAnswerViewSet, InterestViewSet, TeacherViewSet,UserProfileView,
     ProfileViewSet, EWalletViewSet, DepositMethodViewSet, DepositRequestViewSet, CustomTokenObtainPairView, StudyFieldViewSet, UniversityViewSet,
     TransactionViewSet, NotificationViewSet, start_verification, verify_pin
 )
@@ -34,4 +34,5 @@ urlpatterns = [
     path('auth/verify/submit/', verify_pin, name='verify-pin'),
     # Router URLs
     path('', include(router.urls)),
+    path("jobs/<uuid:job_id>/", JobStatusView.as_view())
 ]

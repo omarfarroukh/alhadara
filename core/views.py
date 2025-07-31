@@ -1,9 +1,12 @@
 from rest_framework import viewsets, permissions, filters, status
 from rest_framework.decorators import action,api_view,permission_classes,authentication_classes
 from rest_framework_simplejwt.authentication import JWTAuthentication
+from rq.job import Job
 from rest_framework.response import Response
 from rest_framework import serializers
 from rest_framework_simplejwt.views import TokenObtainPairView
+from rest_framework.views import APIView
+from django_rq import get_queue
 from rest_framework.parsers import MultiPartParser, FormParser
 from drf_spectacular.utils import extend_schema,OpenApiExample, OpenApiResponse,inline_serializer,OpenApiParameter
 from django.utils.crypto import get_random_string
@@ -20,7 +23,8 @@ from .models import (ProfileImage, SecurityQuestion, SecurityAnswer, Interest,
 )
 from .serializers import (
     NewPasswordSerializer, PasswordResetRequestSerializer, ProfileImageSerializer, SecurityAnswerValidationSerializer, SecurityQuestionSerializer, SecurityAnswerSerializer, InterestSerializer, 
-    ProfileSerializer, EWalletSerializer, DepositMethodSerializer, DepositRequestSerializer, AddInterestSerializer,RemoveInterestSerializer, StudyFieldSerializer, TeacherSerializer, UniversitySerializer, TransactionSerializer, NotificationSerializer
+    ProfileSerializer, EWalletSerializer, DepositMethodSerializer, DepositRequestSerializer, AddInterestSerializer,RemoveInterestSerializer, StudyFieldSerializer, TeacherSerializer, UniversitySerializer, TransactionSerializer, NotificationSerializer,
+    PasswordResetOTPRequestSerializer, PasswordResetOTPValidateSerializer
 )
 from django.conf import settings
 from rest_framework.permissions import AllowAny
@@ -37,7 +41,7 @@ import uuid
 from django.db.models import Q
 from decimal import Decimal
 import time
-from .tasks import  notify_deposit_request_created_task,notify_deposit_status_changed_task
+from .tasks import  notify_deposit_request_created_task,notify_deposit_status_changed_task, notify_ewallet_withdrawal_task, notify_password_changed_task, send_telegram_password_reset_otp_task
 from django.db import transaction
 from django.core.exceptions import ValidationError
 
@@ -462,6 +466,9 @@ class EWalletViewSet(viewsets.ReadOnlyModelViewSet):
                 reference_id=f"WTH-{int(time.time())}"
             )
             
+            # Send notification
+            notify_ewallet_withdrawal_task.delay(wallet.user.id, amount)
+            
             return Response({
                 'message': 'Withdrawal successful',
                 'new_balance': wallet.balance
@@ -872,6 +879,9 @@ class PasswordResetViewSet(viewsets.ViewSet):
             # Log the successful password reset
             logger.info(f"Password reset successful for user ID: {user.id}")
             
+            # Send notification
+            notify_password_changed_task.delay(user.id)
+
             # Invalidate all existing sessions (optional)
             try:
                 from django.contrib.sessions.models import Session
@@ -895,3 +905,78 @@ class PasswordResetViewSet(viewsets.ViewSet):
                 {'error': 'An error occurred processing your request'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+
+    @extend_schema(
+        request=PasswordResetOTPRequestSerializer,
+        responses={
+            200: OpenApiResponse(description="OTP sent successfully."),
+            400: OpenApiResponse(description="Invalid request or user does not have a linked Telegram account.")
+        },
+        description="Request a password reset OTP to be sent via Telegram."
+    )
+    @action(detail=False, methods=['post'], url_path='request-otp')
+    def request_otp(self, request):
+        serializer = PasswordResetOTPRequestSerializer(data=request.data)
+        if serializer.is_valid():
+            user = User.objects.get(phone=serializer.validated_data['phone'])
+            otp = get_random_string(6, '0123456789')
+            cache.set(f'password_reset_otp_{user.id}', otp, timeout=600)
+            send_telegram_password_reset_otp_task.delay(user.id, otp)
+            return Response({'status': 'OTP sent to your Telegram account.'})
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    @extend_schema(
+        request=PasswordResetOTPValidateSerializer,
+        responses={
+            200: OpenApiResponse(description="OTP validated successfully, reset token returned."),
+            400: OpenApiResponse(description="Invalid OTP or user not found.")
+        },
+        description="Validate the password reset OTP and get a reset token."
+    )
+    @action(detail=False, methods=['post'], url_path='validate-otp')
+    def validate_otp(self, request):
+        serializer = PasswordResetOTPValidateSerializer(data=request.data)
+        if serializer.is_valid():
+            user = User.objects.get(phone=serializer.validated_data['phone'])
+            reset_token = secrets.token_urlsafe(32)
+            user.reset_token = reset_token
+            user.reset_token_expires = timezone.now() + timezone.timedelta(minutes=10)
+            user.save()
+            cache.delete(f'password_reset_otp_{user.id}')
+            return Response({'reset_token': reset_token})
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    @extend_schema(
+        request=NewPasswordSerializer,
+        responses={
+            200: OpenApiResponse(description="Password has been reset successfully."),
+            400: OpenApiResponse(description="Invalid token, expired token, or passwords do not match.")
+        },
+        description="Confirm the password reset by providing the reset token and the new password."
+    )
+    @action(detail=False, methods=['post'], url_path='confirm-reset-with-token')
+    def confirm_reset_with_token(self, request):
+        serializer = NewPasswordSerializer(data=request.data)
+        if serializer.is_valid():
+            try:
+                user = User.objects.get(reset_token=serializer.validated_data['reset_token'])
+                if user.reset_token_expires < timezone.now():
+                    return Response({'error': 'Token has expired.'}, status=status.HTTP_400_BAD_REQUEST)
+                user.set_password(serializer.validated_data['new_password'])
+                user.reset_token = None
+                user.reset_token_expires = None
+                user.save()
+                notify_password_changed_task.delay(user.id)
+                return Response({'status': 'Password has been reset successfully.'})
+            except User.DoesNotExist:
+                return Response({'error': 'Invalid token.'}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+            
+class JobStatusView(APIView):
+    def get(self, request, job_id):
+        job = Job.fetch(str(job_id), connection=get_queue().connection)  # <-- cast to str
+        if job.is_finished:
+            return Response({"status": "finished", "result": job.result})
+        if job.is_failed:
+            return Response({"status": "failed", "error": str(job.exc_info)})
+        return Response({"status": "queued"})

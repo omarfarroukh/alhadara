@@ -21,13 +21,24 @@ User = get_user_model()
 
 logger = logging.getLogger(__name__)
 
+async def _async_send_telegram_message(chat_id, text, parse_mode=None):
+    """Asynchronously sends a message to a Telegram chat."""
+    try:
+        bot = Bot(token=settings.TELEGRAM_BOT_TOKEN)
+        await bot.send_message(
+            chat_id=chat_id,
+            text=text,
+            parse_mode=parse_mode
+        )
+        logger.info(f"Successfully sent message to chat_id: {chat_id}")
+    except Exception as e:
+        logger.error(f"Failed to send message to chat_id {chat_id}: {e}")
+
+
 async def _async_send_pin(chat_id, pin):
-    bot = Bot(token=settings.TELEGRAM_BOT_TOKEN)
-    await bot.send_message(
-        chat_id=chat_id,
-        text=f"🔑 Your verification PIN: **{pin}**\n\nEnter this in the app.",
-        parse_mode="Markdown"
-    )
+    """Sends a verification PIN via Telegram."""
+    message = f"🔑 Your verification PIN: **{pin}**\n\nEnter this in the app."
+    await _async_send_telegram_message(chat_id, message, parse_mode="Markdown")
 
 def send_telegram_pin(chat_id, token):
     try:
@@ -320,3 +331,96 @@ def update_enrollment_statuses_bulk():
     print(f"  - Completed: {completed_count}")
     print(f"  - Active: {active_count}")
     return updated_count
+# ------------------------- User/Auth-Related Tasks ------------------------------
+
+@job('default', retry=Retry(max=2))
+def notify_password_changed_task(user_id):
+    """Notifies user about a password change via in-app and Telegram."""
+    try:
+        user = User.objects.get(id=user_id)
+        message = 'Your password has been changed. If you did not initiate this, please contact support immediately.'
+
+        # Send in-app notification
+        send_notification_task.delay(
+            recipient_id=user.id,
+            notification_type='password_changed',
+            title='Password Changed Successfully',
+            message=message,
+            data={'user_id': user.id}
+        )
+
+        # Send Telegram notification if chat_id is available
+        if user.telegram_chat_id:
+            telegram_message = f"Hello {user.get_full_name()},\n\n{message}"
+            try:
+                asyncio.run(_async_send_telegram_message(user.telegram_chat_id, telegram_message))
+                logger.info(f"Sent password change Telegram notification to user {user.id}")
+            except Exception as e:
+                logger.error(f"Failed to send password change Telegram notification to user {user.id}: {e}")
+
+    except User.DoesNotExist:
+        logger.warning(f"User with ID {user_id} not found for password change notification.")
+        pass
+
+
+@job('default', retry=Retry(max=2))
+def send_telegram_password_reset_otp_task(user_id, otp):
+    """Sends a password reset OTP to the user's Telegram."""
+    try:
+        user = User.objects.get(id=user_id)
+        if user.telegram_chat_id:
+            message = f"🔑 Your password reset OTP is: **{otp}**\n\nThis OTP will expire in 10 minutes."
+            try:
+                asyncio.run(_async_send_telegram_message(user.telegram_chat_id, message, parse_mode="Markdown"))
+                logger.info(f"Sent password reset OTP to user {user.id}")
+            except Exception as e:
+                logger.error(f"Failed to send password reset OTP to user {user.id}: {e}")
+        else:
+            logger.warning(f"User {user.id} does not have a telegram_chat_id for password reset OTP.")
+    except User.DoesNotExist:
+        logger.warning(f"User with ID {user_id} not found for sending password reset OTP.")
+        pass
+
+# ------------------------- EWallet-Related Tasks ------------------------------
+
+@job('default', retry=Retry(max=2))
+def notify_ewallet_withdrawal_task(user_id, amount):
+    """Notifies user about an eWallet withdrawal."""
+    try:
+        user = User.objects.get(id=user_id)
+        send_notification_task.delay(
+            recipient_id=user.id,
+            notification_type='ewallet_withdrawal',
+            title='eWallet Withdrawal',
+            message=f'You have successfully withdrawn {amount} from your eWallet.',
+            data={'user_id': user.id, 'amount': str(amount)}
+        )
+    except User.DoesNotExist:
+        pass
+
+@job('default', retry=Retry(max=2))
+def notify_ewallet_transfer_task(sender_id, receiver_id, amount):
+    """Notifies both sender and receiver about an eWallet transfer."""
+    try:
+        sender = User.objects.get(id=sender_id)
+        receiver = User.objects.get(id=receiver_id)
+
+        # Notify sender
+        send_notification_task.delay(
+            recipient_id=sender.id,
+            notification_type='ewallet_transfer_sent',
+            title='eWallet Transfer Sent',
+            message=f'You have successfully sent {amount} to {receiver.get_full_name()}.',
+            data={'sender_id': sender.id, 'receiver_id': receiver.id, 'amount': str(amount)}
+        )
+
+        # Notify receiver
+        send_notification_task.delay(
+            recipient_id=receiver.id,
+            notification_type='ewallet_transfer_received',
+            title='eWallet Transfer Received',
+            message=f'You have received {amount} from {sender.get_full_name()}.',
+            data={'sender_id': sender.id, 'receiver_id': receiver.id, 'amount': str(amount)}
+        )
+    except User.DoesNotExist:
+        pass

@@ -10,6 +10,7 @@ from .models import ( ProfileImage, SecurityQuestion, SecurityAnswer, Interest,
 from django.core.exceptions import ValidationError as DjangoValidationError
 from rest_framework.exceptions import ValidationError as DRFValidationError
 from django.contrib.auth import get_user_model
+from django.core.cache import cache
 from .validators import validate_password_strength
 User = get_user_model()
 
@@ -261,6 +262,36 @@ class NewPasswordSerializer(serializers.Serializer):
                 raise serializers.ValidationError({"new_password": e.detail})
                 
             return data        
+
+
+class PasswordResetOTPRequestSerializer(serializers.Serializer):
+    phone = serializers.CharField(max_length=20)
+
+    def validate_phone(self, value):
+        try:
+            user = User.objects.get(phone=value)
+            if not user.telegram_chat_id:
+                raise serializers.ValidationError("This user does not have a connected Telegram account.")
+        except User.DoesNotExist:
+            raise serializers.ValidationError("User with this phone number does not exist.")
+        return value
+
+
+class PasswordResetOTPValidateSerializer(serializers.Serializer):
+    phone = serializers.CharField(max_length=20)
+    otp = serializers.CharField(max_length=6)
+
+    def validate(self, data):
+        try:
+            user = User.objects.get(phone=data['phone'])
+            cached_otp = cache.get(f'password_reset_otp_{user.id}')
+            if not cached_otp or cached_otp != data['otp']:
+                raise serializers.ValidationError("Invalid OTP.")
+        except User.DoesNotExist:
+            raise serializers.ValidationError("User not found.")
+        return data
+
+
     
 class UniversitySerializer(serializers.ModelSerializer):
     class Meta:
