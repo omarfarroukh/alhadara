@@ -482,12 +482,12 @@ class ScheduleSlotViewSet(viewsets.ModelViewSet):
             show_all = user.is_staff or (hasattr(user, 'user_type') and user.user_type == 'reception')
             
             if not show_all:
-                # For non-admin/reception users, exclude finished slots and slots with >3 lessons
-                queryset = queryset.filter(
+                queryset = queryset.annotate(
+                    lessons_count=Count('lessons_in_lessons_app')
+                ).filter(
                     (Q(valid_until__gte=today) | Q(valid_until__isnull=True)) &
-                    ~Q(lessons_in_lessons_app__count__gt=3)
+                    ~Q(lessons_count__gt=3)
                 )
-        
         return queryset.distinct()
     
     def list(self, request, *args, **kwargs):

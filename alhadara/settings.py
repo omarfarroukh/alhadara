@@ -74,6 +74,7 @@ INSTALLED_APPS = [
     'loyaltypoints',
     'referrals',
     'feedback',
+    'entanceexamp'
 ]
 
 MIDDLEWARE = [
