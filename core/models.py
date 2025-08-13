@@ -188,6 +188,40 @@ class Profile(models.Model):
     university = models.ForeignKey(University, on_delete=models.SET_NULL, null=True, blank=True,default='Null', related_name='profiles')
     studyfield = models.ForeignKey(StudyField, on_delete=models.SET_NULL, null=True, blank=True,default='Null', related_name='profiles')
 
+    # Language levels achieved through entrance exams
+    english_level = models.ForeignKey(
+        'entranceexam.LanguageLevel', 
+        on_delete=models.SET_NULL, 
+        null=True, 
+        blank=True,
+        related_name='english_profiles',
+        help_text="English language level achieved"
+    )
+    german_level = models.ForeignKey(
+        'entranceexam.LanguageLevel', 
+        on_delete=models.SET_NULL, 
+        null=True, 
+        blank=True,
+        related_name='german_profiles',
+        help_text="German language level achieved"
+    )
+    french_level = models.ForeignKey(
+        'entranceexam.LanguageLevel', 
+        on_delete=models.SET_NULL, 
+        null=True, 
+        blank=True,
+        related_name='french_profiles',
+        help_text="French language level achieved"
+    )
+    spanish_level = models.ForeignKey(
+        'entranceexam.LanguageLevel', 
+        on_delete=models.SET_NULL, 
+        null=True, 
+        blank=True,
+        related_name='spanish_profiles',
+        help_text="Spanish language level achieved"
+    )
+
     def __str__(self):
         return self.user.get_full_name() or str(self.user)
     
@@ -229,6 +263,34 @@ class Profile(models.Model):
     def save(self, *args, **kwargs):
         self.full_clean()
         super().save(*args, **kwargs)
+    
+    def update_language_level(self, language_name, level):
+        """Update language level for a specific language"""
+        language_field_map = {
+            'english': 'english_level',
+            'german': 'german_level', 
+            'french': 'french_level',
+            'spanish': 'spanish_level'
+        }
+        
+        field_name = language_field_map.get(language_name.lower())
+        if field_name:
+            setattr(self, field_name, level)
+            self.save()
+    
+    def get_language_level(self, language_name):
+        """Get achieved language level for a specific language"""
+        language_field_map = {
+            'english': 'english_level',
+            'german': 'german_level',
+            'french': 'french_level', 
+            'spanish': 'spanish_level'
+        }
+        
+        field_name = language_field_map.get(language_name.lower())
+        if field_name:
+            return getattr(self, field_name)
+        return None
             
 class ProfileImage(models.Model):
     profile = models.OneToOneField(Profile, on_delete=models.CASCADE,related_name='image')

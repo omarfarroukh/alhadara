@@ -73,13 +73,19 @@ class CourseSerializer(serializers.ModelSerializer):
     is_in_wishlist = serializers.SerializerMethodField()
     wishlist_count = serializers.SerializerMethodField(read_only=True)
     
+    # Language requirements
+    required_language_name = serializers.SerializerMethodField()
+    required_language_level_display = serializers.SerializerMethodField()
+    language_requirement_met = serializers.SerializerMethodField()
+    
     class Meta:
         model = Course
         fields = (
             'id', 'title', 'description', 'price', 'duration', 
             'max_students', 'certification_eligible', 'department', 
             'department_name', 'course_type', 'course_type_name', 'category',
-            'is_in_wishlist', 'wishlist_count'
+            'is_in_wishlist', 'wishlist_count', 'required_language', 'required_language_name',
+            'required_language_level', 'required_language_level_display', 'language_requirement_met'
         )
 
     
@@ -112,6 +118,28 @@ class CourseSerializer(serializers.ModelSerializer):
     def get_wishlist_count(self, obj):
         # Count how many wishlists include this course
         return obj.wishlists.count()
+    
+    def get_language_requirement_met(self, obj):
+        """Check if current user meets language requirements"""
+        request = self.context.get('request')
+        if not request or not request.user.is_authenticated or request.user.user_type != 'student':
+            return None
+        
+        can_enroll, message = obj.can_student_enroll_language_wise(request.user)
+        return {
+            'can_enroll': can_enroll,
+            'message': message
+        }
+    
+    def get_required_language_name(self, obj):
+        if obj.required_language:
+            return dict(obj.required_language.LANGUAGE_CHOICES)[obj.required_language.name]
+        return None
+    
+    def get_required_language_level_display(self, obj):
+        if obj.required_language_level:
+            return dict(obj.required_language_level.LEVEL_CHOICES)[obj.required_language_level.level]
+        return None
     
     def validate(self, data):
         """

@@ -1,0 +1,88 @@
+[
+  {
+    "model": "entranceexam.language",
+    "pk": 1,
+    "fields": {
+      "name": "english",
+      "is_active": true
+    }
+  },
+  {
+    "model": "entranceexam.language",
+    "pk": 2,
+    "fields": {
+      "name": "german",
+      "is_active": true
+    }
+  },
+  {
+    "model": "entranceexam.language",
+    "pk": 3,
+    "fields": {
+      "name": "french",
+      "is_active": true
+    }
+  },
+  {
+    "model": "entranceexam.language",
+    "pk": 4,
+    "fields": {
+      "name": "spanish",
+      "is_active": true
+    }
+  },
+  {
+    "model": "entranceexam.languagelevel",
+    "pk": 1,
+    "fields": {
+      "level": "a1",
+      "min_score": 0,
+      "max_score": 29
+    }
+  },
+  {
+    "model": "entranceexam.languagelevel",
+    "pk": 2,
+    "fields": {
+      "level": "a2",
+      "min_score": 30,
+      "max_score": 49
+    }
+  },
+  {
+    "model": "entranceexam.languagelevel",
+    "pk": 3,
+    "fields": {
+      "level": "b1",
+      "min_score": 50,
+      "max_score": 69
+    }
+  },
+  {
+    "model": "entranceexam.languagelevel",
+    "pk": 4,
+    "fields": {
+      "level": "b2",
+      "min_score": 70,
+      "max_score": 84
+    }
+  },
+  {
+    "model": "entranceexam.languagelevel",
+    "pk": 5,
+    "fields": {
+      "level": "c1",
+      "min_score": 85,
+      "max_score": 94
+    }
+  },
+  {
+    "model": "entranceexam.languagelevel",
+    "pk": 6,
+    "fields": {
+      "level": "c2",
+      "min_score": 95,
+      "max_score": 100
+    }
+  }
+] 

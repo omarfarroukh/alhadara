@@ -22,6 +22,7 @@ urlpatterns = [
     path('api/loyaltypoints/', include('loyaltypoints.urls')),
     path('api/referrals/', include('referrals.urls')),
     path('api/feedback/', include('feedback.urls')),
+    path('api/entrance-exam/', include('entranceexam.urls')),
     path('django-rq/', include('django_rq.urls')),
 ]
 

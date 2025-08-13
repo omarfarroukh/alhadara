@@ -132,6 +132,24 @@ class Course(models.Model):
     department = models.ForeignKey(Department, on_delete=models.CASCADE, related_name='courses')
     course_type = models.ForeignKey(CourseType, on_delete=models.CASCADE, related_name='courses')
     
+    # Language requirements
+    required_language = models.ForeignKey(
+        'entranceexam.Language',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='required_courses',
+        help_text="Required language for this course"
+    )
+    required_language_level = models.ForeignKey(
+        'entranceexam.LanguageLevel',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='required_courses',
+        help_text="Minimum language level required for this course"
+    )
+    
     def __str__(self):
         return self.title
         
@@ -160,6 +178,31 @@ class Course(models.Model):
             raise ValidationError(
                 "The selected course type does not belong to the specified department"
             )
+    
+    def can_student_enroll_language_wise(self, student):
+        """Check if student meets language requirements for this course"""
+        if not self.required_language or not self.required_language_level:
+            return True, "No language requirement"
+        
+        try:
+            student_profile = student.profile
+            student_level = student_profile.get_language_level(self.required_language.name)
+            
+            if not student_level:
+                return False, f"No {self.required_language} level found. Please take the entrance exam."
+            
+            # Compare levels (a1 = 1, a2 = 2, etc.)
+            level_order = {'a1': 1, 'a2': 2, 'b1': 3, 'b2': 4, 'c1': 5, 'c2': 6}
+            required_order = level_order.get(self.required_language_level.level, 0)
+            student_order = level_order.get(student_level.level, 0)
+            
+            if student_order >= required_order:
+                return True, "Language requirement met"
+            else:
+                return False, f"Requires {self.required_language_level} level in {self.required_language}. Your level: {student_level}"
+                
+        except AttributeError:
+            return False, "Student profile not found"
     
     @classmethod
     def get_recommended_courses(cls, user, limit=10):
@@ -650,6 +693,11 @@ class Enrollment(models.Model):
                     status__in=['pending', 'active']
                 ).exists():
                     raise ValidationError("Student is already enrolled in this course")
+                
+                # Check language requirements for non-guest students
+                can_enroll, message = self.course.can_student_enroll_language_wise(self.student)
+                if not can_enroll:
+                    raise ValidationError(f"Language requirement not met: {message}")
         
         # Check schedule slot capacity
         if self.schedule_slot:

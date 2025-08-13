@@ -353,14 +353,22 @@ class ProfileSerializer(serializers.ModelSerializer):
     studyfield_name = serializers.CharField(source='studyfield.name', read_only=True)
     academic_status = serializers.ChoiceField(choices=Profile.ACADEMIC_STATUS_CHOICES, required=False, allow_null=True)
     image = ProfileImageSerializer(many=False, read_only=True)
+    
+    # Language levels (read-only)
+    english_level_display = serializers.SerializerMethodField()
+    german_level_display = serializers.SerializerMethodField()
+    french_level_display = serializers.SerializerMethodField()
+    spanish_level_display = serializers.SerializerMethodField()
 
     class Meta:
         model = Profile
         fields = (
             'id', 'birth_date', 'gender', 'address', 'academic_status','image',
-            'university', 'studyfield', 'interests', 'full_name','university_name','studyfield_name'
+            'university', 'studyfield', 'interests', 'full_name','university_name','studyfield_name',
+            'english_level', 'english_level_display', 'german_level', 'german_level_display',
+            'french_level', 'french_level_display', 'spanish_level', 'spanish_level_display'
         )
-        read_only_fields = ['id']
+        read_only_fields = ['id', 'english_level', 'german_level', 'french_level', 'spanish_level']
         
     def create(self, validated_data):
         # Automatically set the user to the current user
@@ -375,6 +383,26 @@ class ProfileSerializer(serializers.ModelSerializer):
         except DjangoValidationError as e:
             raise DRFValidationError(e.message_dict)
         return instance
+    
+    def get_english_level_display(self, obj):
+        if obj.english_level:
+            return dict(obj.english_level.LEVEL_CHOICES)[obj.english_level.level]
+        return None
+    
+    def get_german_level_display(self, obj):
+        if obj.german_level:
+            return dict(obj.german_level.LEVEL_CHOICES)[obj.german_level.level]
+        return None
+    
+    def get_french_level_display(self, obj):
+        if obj.french_level:
+            return dict(obj.french_level.LEVEL_CHOICES)[obj.french_level.level]
+        return None
+    
+    def get_spanish_level_display(self, obj):
+        if obj.spanish_level:
+            return dict(obj.spanish_level.LEVEL_CHOICES)[obj.spanish_level.level]
+        return None
 
 class EWalletSerializer(serializers.ModelSerializer):
     user_full_name = serializers.ReadOnlyField(source='user.get_full_name')
