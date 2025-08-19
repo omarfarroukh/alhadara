@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 from django_rq import job, get_queue
 from rq import Retry
@@ -11,7 +11,7 @@ import random
 from django.conf import settings
 from telegram import Bot
 from django.core.cache import cache
-from .models import Notification, DepositRequest
+from .models import Captcha, Notification, DepositRequest
 import logging
 import asyncio
 User = get_user_model()
@@ -20,6 +20,15 @@ User = get_user_model()
 
 
 logger = logging.getLogger(__name__)
+
+
+@job('default')
+def cleanup_expired_captchas_task():
+    cutoff  = timezone.now() - timedelta(minutes=5)
+    deleted, _ = Captcha.objects.filter(created_at__lt=cutoff).delete()
+    return f"Expired CAPTCHAs removed: {deleted}"
+
+
 
 async def _async_send_telegram_message(chat_id, text, parse_mode=None):
     """Asynchronously sends a message to a Telegram chat."""

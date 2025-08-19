@@ -18,6 +18,7 @@ class IsAdminOrReception(permissions.BasePermission):
             request.user.is_authenticated and 
             (request.user.is_staff or request.user.user_type in ['admin', 'reception'])
         )
+        
 class IsOwnerOrAdminOrReception(permissions.BasePermission):
     """
     Object-level permission to allow owners, admins or reception staff.
@@ -36,6 +37,7 @@ class IsOwnerOrAdminOrReception(permissions.BasePermission):
             return obj.user_id == request.user.id
             
         return False
+    
 class IsStudent(permissions.BasePermission):
     """
     Allows access only to student users.

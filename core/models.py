@@ -1,3 +1,4 @@
+from datetime import timedelta
 from decimal import Decimal
 from django.conf import settings
 from django.db import models
@@ -601,3 +602,12 @@ class FileStorage(models.Model):
 
     def __str__(self):
         return self.file.name if self.file else self.telegram_file_id or 'Telegram File'
+    
+    
+class Captcha(models.Model):
+    key   = models.CharField(max_length=64, unique=True)
+    text  = models.CharField(max_length=10)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def is_expired(self):
+        return timezone.now() > self.created_at + timedelta(minutes=5)

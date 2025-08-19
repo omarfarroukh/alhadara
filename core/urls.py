@@ -4,7 +4,7 @@ from rest_framework_simplejwt.views import TokenRefreshView, TokenVerifyView
 from .views import (
     JobStatusView, PasswordResetViewSet, ProfileImageViewSet, SecurityQuestionViewSet, SecurityAnswerViewSet, InterestViewSet, TeacherViewSet,UserProfileView,
     ProfileViewSet, EWalletViewSet, DepositMethodViewSet, DepositRequestViewSet, CustomTokenObtainPairView, StudyFieldViewSet, UniversityViewSet,
-    TransactionViewSet, NotificationViewSet, start_verification, verify_pin
+    TransactionViewSet, NotificationViewSet, get_captcha, start_verification, verify_captcha, verify_pin
 )
 
 router = DefaultRouter()
@@ -32,6 +32,8 @@ urlpatterns = [
     path('profile/me/', UserProfileView.as_view(), name='user-profile'),
     path('auth/verify/start/', start_verification, name='start-verification'),
     path('auth/verify/submit/', verify_pin, name='verify-pin'),
+    path('api/captcha/',        get_captcha,   name='get-captcha'),
+    path('api/captcha/verify/', verify_captcha, name='verify-captcha'),
     # Router URLs
     path('', include(router.urls)),
     path("jobs/<uuid:job_id>/", JobStatusView.as_view())

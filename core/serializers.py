@@ -20,10 +20,13 @@ class CustomUserCreateSerializer(serializers.ModelSerializer):
     confirm_password = serializers.CharField(write_only=True, required=True)
     is_verified = serializers.BooleanField(read_only=True)  # Add this line
 
+    captcha_key     = serializers.CharField(write_only=True, required=True)
+    captcha_answer  = serializers.CharField(write_only=True, required=True)
+    
     class Meta:
         model = User
         fields = ('id', 'phone', 'password', 'confirm_password', 'first_name', 
-                'middle_name', 'last_name', 'user_type', 'access', 'refresh','is_verified')
+                'middle_name', 'last_name', 'user_type', 'access', 'refresh', 'is_verified', 'captcha_key', 'captcha_answer')
         extra_kwargs = {
             'password': {
                 'write_only': True,
@@ -50,6 +53,9 @@ class CustomUserCreateSerializer(serializers.ModelSerializer):
         """Check that passwords match"""
         if data['password'] != data['confirm_password']:
             raise serializers.ValidationError({"confirm_password": "Passwords do not match"})
+        from .utils import validate_captcha
+        if not validate_captcha(data.pop('captcha_key'), data.pop('captcha_answer')):
+            raise serializers.ValidationError({'captcha_answer': 'Invalid or expired CAPTCHA'})
         return data
 
     def create(self, validated_data):

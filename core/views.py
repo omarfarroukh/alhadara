@@ -12,6 +12,8 @@ from drf_spectacular.utils import extend_schema,OpenApiExample, OpenApiResponse,
 from django.utils.crypto import get_random_string
 from django.utils import timezone
 from rest_framework.permissions import IsAuthenticated
+
+from core.utils import generate_captcha, validate_captcha
 from .throttles import LoginRateThrottle
 from drf_spectacular.types import OpenApiTypes
 from rest_framework.generics import RetrieveAPIView
@@ -47,6 +49,58 @@ from django.core.exceptions import ValidationError
 
 logger = logging.getLogger(__name__)
 User = get_user_model()
+
+@api_view(['GET'])
+@permission_classes([AllowAny])
+def get_captcha(request):
+    key, img = generate_captcha()
+    return Response({'key': key, 'image': img})
+
+@extend_schema(
+    summary="Validate a CAPTCHA answer",
+    description=(
+        "Send the **captcha_key** you received from `GET /api/captcha/` "
+        "together with the **answer** the user typed.  \n"
+        "The key can only be used **once** and expires after **5 minutes**."
+    ),
+    request={
+        "application/json": {
+            "type": "object",
+            "properties": {
+                "key":    {"type": "string", "description": "CAPTCHA key"},
+                "answer": {"type": "string", "description": "6-character answer"},
+            },
+            "required": ["key", "answer"],
+            "example": {"key": "aBc123", "answer": "H7K9M2"},
+        }
+    },
+    responses={
+        200: {"description": "Answer is correct", "example": {"valid": True}},
+        400: {"description": "Answer is wrong or key expired", "example": {"valid": False}},
+    },
+    examples=[
+        OpenApiExample(
+            "Valid request",
+            value={"key": "aBc123", "answer": "H7K9M2"},
+            request_only=True,
+        ),
+        OpenApiExample(
+            "Valid response",
+            value={"valid": True},
+            response_only=True,
+        ),
+    ],
+)
+@api_view(['POST'])
+@permission_classes([AllowAny])
+def verify_captcha(request):
+    key    = request.data.get('key')
+    answer = request.data.get('answer')
+    ok     = validate_captcha(key, str(answer))
+    return Response({'valid': ok}, status=status.HTTP_200_OK if ok else status.HTTP_400_BAD_REQUEST)
+
+
+
 
 class TeacherViewSet(viewsets.ViewSet):
     """
