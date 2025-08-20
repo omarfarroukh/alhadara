@@ -20,8 +20,8 @@ class CustomUserCreateSerializer(serializers.ModelSerializer):
     confirm_password = serializers.CharField(write_only=True, required=True)
     is_verified = serializers.BooleanField(read_only=True)  # Add this line
 
-    captcha_key     = serializers.CharField(write_only=True, required=True)
-    captcha_answer  = serializers.CharField(write_only=True, required=True)
+    captcha_key     = serializers.CharField(write_only=True, required=False)
+    captcha_answer  = serializers.CharField(write_only=True, required=False)
     
     class Meta:
         model = User
@@ -53,9 +53,19 @@ class CustomUserCreateSerializer(serializers.ModelSerializer):
         """Check that passwords match"""
         if data['password'] != data['confirm_password']:
             raise serializers.ValidationError({"confirm_password": "Passwords do not match"})
-        from .utils import validate_captcha
-        if not validate_captcha(data.pop('captcha_key'), data.pop('captcha_answer')):
-            raise serializers.ValidationError({'captcha_answer': 'Invalid or expired CAPTCHA'})
+          # Captcha only for students
+        if data.get('user_type') == 'student':
+            key    = data.pop('captcha_key', None)
+            answer = data.pop('captcha_answer', None)
+            if key is None or answer is None:
+                raise serializers.ValidationError({'captcha_answer': 'CAPTCHA required for students'})
+            from utils import validate_captcha
+            if not validate_captcha(key, answer):
+                raise serializers.ValidationError({'captcha_answer': 'Invalid or expired CAPTCHA'})
+        else:
+            # Admin / reception / teacher – silently drop captcha fields
+            data.pop('captcha_key', None)
+            data.pop('captcha_answer', None)
         return data
 
     def create(self, validated_data):
