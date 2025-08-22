@@ -30,7 +30,7 @@ from .serializers import (
 )
 from django.conf import settings
 from rest_framework.permissions import AllowAny
-from .permissions import IsStudent,IsReception, IsAdminOrReception, IsOwnerOrAdminOrReception
+from .permissions import IsReceptionOrStudent, IsStudent,IsReception, IsAdminOrReception, IsOwnerOrAdminOrReception
 from django_ratelimit.exceptions import Ratelimited
 from rest_framework.exceptions import NotFound
 from django.shortcuts import render
@@ -564,7 +564,7 @@ class NotificationViewSet(viewsets.ReadOnlyModelViewSet):
 class DepositRequestViewSet(viewsets.ModelViewSet):
     parser_classes = (MultiPartParser, FormParser)
     serializer_class = DepositRequestSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsReceptionOrStudent]
     filter_backends = [filters.OrderingFilter]
     ordering_fields = ['created_at', 'status']
     ordering = ['-created_at']

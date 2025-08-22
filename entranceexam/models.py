@@ -5,6 +5,10 @@ from django.utils import timezone
 from django.core.validators import MinValueValidator, MaxValueValidator
 from decimal import Decimal
 import uuid
+from io import BytesIO
+import base64
+import qrcode
+
 
 User = get_user_model()
 
@@ -95,6 +99,15 @@ class EntranceExam(models.Model):
     
     class Meta:
         ordering = ['-created_at']
+    
+    @property
+    def qr_image_base64(self):
+        """Return PNG QR as base64 data-URI."""
+        qr = qrcode.make(str(self.qr_code))
+        buffer = BytesIO()
+        qr.save(buffer, format="PNG")
+        b64 = base64.b64encode(buffer.getvalue()).decode()
+        return f"data:image/png;base64,{b64}"
     
     def __str__(self):
         return f"{self.language} - {self.title}"

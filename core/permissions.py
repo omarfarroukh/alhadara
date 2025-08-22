@@ -1,4 +1,5 @@
 from rest_framework import permissions
+from rest_framework.exceptions import PermissionDenied
 
 
 class IsAdminUser(permissions.BasePermission):
@@ -20,31 +21,42 @@ class IsAdminOrReception(permissions.BasePermission):
         )
         
 class IsOwnerOrAdminOrReception(permissions.BasePermission):
-    """
-    Object-level permission to allow owners, admins or reception staff.
-    """
+    message = (
+        "Your student account must be verified before you can perform this action. "
+        "Please complete phone verification via Telegram and try again."
+    )
+
     def has_object_permission(self, request, view, obj):
-        # Allow admin/reception
-        if request.user.is_staff or request.user.user_type in ['admin', 'reception']:
+        user = request.user
+
+        # 1. Admin / reception / teacher → always OK
+        if user.is_staff or user.user_type in ['admin', 'reception', 'teacher']:
             return True
-            
-        # Check if object has a user attribute
-        if hasattr(obj, 'user'):
-            return obj.user == request.user
-            
-        # Check if object has a user_id attribute
-        if hasattr(obj, 'user_id'):
-            return obj.user_id == request.user.id
-            
+
+        # 2. Owner check
+        owner = getattr(obj, 'user', None) or getattr(obj, 'user_id', None)
+        if owner == user:
+            # If owner is a student, enforce verification
+            if user.user_type == 'student' and not user.is_verified:
+                raise PermissionDenied(self.message)
+            return True
+
         return False
     
 class IsStudent(permissions.BasePermission):
     """
-    Allows access only to student users.
+    Allow only verified students.
     """
+    message = (
+        "Your student account must be verified before you can perform this action. "
+        "Please complete phone verification via Telegram and try again."
+    )
+
     def has_permission(self, request, view):
-        return bool(request.user and request.user.is_authenticated and 
-                   request.user.user_type == 'student')
+        user = request.user
+        if not (user.is_authenticated and user.user_type == 'student' and user.is_verified):
+            raise PermissionDenied(self.message)
+        return True
 
 class IsTeacher(permissions.BasePermission):
     """
@@ -71,8 +83,28 @@ class IsAdmin(permissions.BasePermission):
                    (request.user.user_type == 'admin' or request.user.is_superuser))
         
 class IsReceptionOrStudent(permissions.BasePermission):
+    message = (
+        "Your student account must be verified before you can perform this action. "
+        "Please complete phone verification via Telegram and try again."
+    )
+
     def has_permission(self, request, view):
-        return hasattr(request.user, 'user_type') and request.user.user_type in ['reception', 'student']
+        user = request.user
+        if not (hasattr(user, 'user_type') and user.is_authenticated):
+            return False
+
+        # Reception is always allowed
+        if user.user_type == 'reception':
+            return True
+
+        # Student must be verified
+        if user.user_type == 'student':
+            if user.is_verified:
+                return True
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied(self.message)
+
+        return False
 
 class IsTeacherOrReceptionOrAdmin(permissions.BasePermission):
     """

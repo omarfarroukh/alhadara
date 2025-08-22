@@ -69,6 +69,8 @@ class EntranceExamSerializer(serializers.ModelSerializer):
     grading_teacher_name = serializers.CharField(source='grading_teacher.get_full_name', read_only=True)
     total_points = serializers.SerializerMethodField()
     question_count = serializers.SerializerMethodField()
+    qr_image_base64 = serializers.ReadOnlyField()
+
     
     class Meta:
         model = EntranceExam
@@ -77,7 +79,7 @@ class EntranceExamSerializer(serializers.ModelSerializer):
             'grading_teacher', 'grading_teacher_name', 'mcq_time_limit_minutes',
             'mcq_total_points', 'speaking_total_points', 'writing_total_points',
             'total_points', 'question_count', 'is_active', 'qr_code',
-            'created_at', 'updated_at'
+            'created_at', 'updated_at','qr_image_base64'
         ]
         read_only_fields = ['id', 'qr_code', 'created_at', 'updated_at']
     

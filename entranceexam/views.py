@@ -85,7 +85,12 @@ class EntranceExamViewSet(viewsets.ModelViewSet):
                 {'error': 'Only students can take entrance exams'},
                 status=status.HTTP_403_FORBIDDEN
             )
-        
+            
+        if not hasattr(request.user, 'profile'):
+            return Response(
+                {'error': 'Student profile is required before taking the entrance exam.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
         # Get the exam
         exam = get_object_or_404(EntranceExam, qr_code=qr_code, is_active=True)
         

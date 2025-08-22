@@ -2,6 +2,8 @@ from django.shortcuts import render
 from rest_framework import generics, status
 from rest_framework.permissions import IsAuthenticated, IsAdminUser
 from rest_framework.response import Response
+
+from core.permissions import IsStudent
 from .models import Feedback
 from .serializers import FeedbackSerializer
 from loyaltypoints.tasks import award_points_task
@@ -12,7 +14,7 @@ from datetime import date
 
 class FeedbackCreateView(generics.CreateAPIView):
     serializer_class = FeedbackSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsStudent]
 
     @extend_schema(
         request=FeedbackSerializer,

@@ -17,6 +17,7 @@ RUN apt-get update && apt-get install -y \
 # Install pip requirements
 COPY requirements.txt /app/
 RUN pip install --upgrade pip
+RUN pip install qrcode
 RUN pip install captcha
 RUN pip install drf-nested-routers
 RUN pip install -r requirements.txt

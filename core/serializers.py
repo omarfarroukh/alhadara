@@ -59,7 +59,7 @@ class CustomUserCreateSerializer(serializers.ModelSerializer):
             answer = data.pop('captcha_answer', None)
             if key is None or answer is None:
                 raise serializers.ValidationError({'captcha_answer': 'CAPTCHA required for students'})
-            from utils import validate_captcha
+            from .utils import validate_captcha
             if not validate_captcha(key, answer):
                 raise serializers.ValidationError({'captcha_answer': 'Invalid or expired CAPTCHA'})
         else:
@@ -71,6 +71,9 @@ class CustomUserCreateSerializer(serializers.ModelSerializer):
     def create(self, validated_data):
         """Create user with validated data"""
         validated_data.pop('confirm_password')
+        
+        is_verified = validated_data.get('user_type') != 'student' #only students are set to false
+        
         user = User.objects.create_user(
             phone=validated_data['phone'],
             password=validated_data['password'],
@@ -78,7 +81,7 @@ class CustomUserCreateSerializer(serializers.ModelSerializer):
             middle_name=validated_data['middle_name'],
             last_name=validated_data['last_name'],
             user_type=validated_data['user_type'],  # Now required (no default)
-            is_verified=False,  # Explicitly set to False
+            is_verified=is_verified,  
         )
         return user
 

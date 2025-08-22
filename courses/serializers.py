@@ -166,7 +166,23 @@ class CourseSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError(e.messages if hasattr(e, 'messages') else str(e))
         
         return data        
-
+class CourseCreateUpdateSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Course
+        fields = [
+            'title',
+            'description',
+            'price',
+            'duration',
+            'max_students',
+            'certification_eligible',
+            'category',          # <— required
+            'department',
+            'course_type',
+            'required_language',
+            'required_language_level',
+        ]
+        
 class ScheduleSlotSerializer(serializers.ModelSerializer):
     course_title = serializers.ReadOnlyField(source='course.title')
     hall_name = serializers.ReadOnlyField(source='hall.name')

@@ -148,8 +148,6 @@ class QuestionCreateSerializer(serializers.ModelSerializer):
     def validate(self, data):
         """Validate question data"""
         quiz = data.get('quiz')
-        if quiz and not quiz.is_active:
-            raise serializers.ValidationError("Cannot add questions to inactive quizzes")
         
         # Validate choices for multiple choice and true/false questions
         choices_data = data.get('choices', [])
