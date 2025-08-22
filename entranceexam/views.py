@@ -89,6 +89,11 @@ class EntranceExamViewSet(viewsets.ModelViewSet):
         from rest_framework import serializers as rfserializers
         class QRSerializer(rfserializers.Serializer):
             qr_code = rfserializers.UUIDField()
+        if not hasattr(request.user, 'profile'):
+            return Response(
+                {'error': 'Student profile is required before taking the entrance exam.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
         ser = QRSerializer(data=request.data)
         ser.is_valid(raise_exception=True)
         exam = get_object_or_404(EntranceExam, qr_code=ser.validated_data['qr_code'], is_active=True)

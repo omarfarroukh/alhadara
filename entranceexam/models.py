@@ -149,6 +149,11 @@ class ExamAttempt(models.Model):
         self.achieved_level = self.exam.get_level_for_score(float(self.percentage))
         self.save()
 
+        # update student profile
+        if self.achieved_level and hasattr(self.student, 'profile'):
+            self.student.profile.update_language_level(self.exam.language.name, self.achieved_level)
+        
+
 class AttemptQuestion(models.Model):
     attempt = models.ForeignKey(ExamAttempt, on_delete=models.CASCADE, related_name='questions')
     bank_question = models.ForeignKey(QuestionBank, on_delete=models.CASCADE)
