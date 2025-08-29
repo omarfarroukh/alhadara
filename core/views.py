@@ -13,6 +13,7 @@ from django.utils.crypto import get_random_string
 from django.utils import timezone
 from rest_framework.permissions import IsAuthenticated
 
+from core.signals import push_counter_sync
 from core.utils import generate_captcha, validate_captcha
 from .throttles import LoginRateThrottle
 from drf_spectacular.types import OpenApiTypes
@@ -549,6 +550,16 @@ class NotificationViewSet(viewsets.ReadOnlyModelViewSet):
     def get_queryset(self):
         return Notification.objects.filter(recipient=self.request.user)
     
+    @extend_schema(
+        summary="Mark one notification as read",
+        request=None,
+        responses={
+            200: OpenApiResponse(
+                description="Notification marked as read",
+                examples={"application/json": {"status": "marked as read"}},
+            )
+        },
+    )
     @action(detail=True, methods=['post'])
     def mark_read(self, request, pk=None):
         notification = self.get_object()
@@ -556,10 +567,29 @@ class NotificationViewSet(viewsets.ReadOnlyModelViewSet):
         notification.save()
         return Response({'status': 'marked as read'})
     
+    @extend_schema(
+        summary="Mark all notifications as read",
+        request=None,
+        responses={
+            200: OpenApiResponse(
+                description="All notifications marked as read",
+                examples={"application/json": {"status": "all marked as read"}},
+            )
+        },
+    )
     @action(detail=False, methods=['post'])
     def mark_all_read(self, request):
-        self.get_queryset().update(is_read=True)
+        qs = self.get_queryset().filter(is_read=False)
+        user_id = request.user.id
+        affected = qs.update(is_read=True)
+        if affected:
+            push_counter_sync(user_id)        # <── add this
         return Response({'status': 'all marked as read'})
+    
+    @action(detail=False, methods=['get'], url_path='unread_count')
+    def unread_count(self, request):
+        count = self.get_queryset().filter(is_read=False).count()
+        return Response({'unread_count': count})
 
 class DepositRequestViewSet(viewsets.ModelViewSet):
     parser_classes = (MultiPartParser, FormParser)

@@ -1,8 +1,16 @@
-from django.db.models.signals import post_save
+from django.db.models.signals import post_save, post_delete
 from django.dispatch import receiver
-from .models import User, EWallet, Transaction
+from .models import Notification, User, EWallet, Transaction
 from .tasks import notify_ewallet_transfer_task
+from channels.layers import get_channel_layer
+from asgiref.sync import async_to_sync
+from django.contrib.auth import get_user_model
 
+
+User = get_user_model() 
+
+
+channel_layer = get_channel_layer()
 
 @receiver(post_save, sender=User)
 def create_user_wallet(sender, instance, created, **kwargs):
@@ -21,3 +29,20 @@ def notify_on_transfer(sender, instance, created, **kwargs):
                 receiver_id=instance.receiver.id,
                 amount=instance.amount
             )
+     
+def push_counter_sync(user_id):
+    """
+    Synchronous version: usable from RQ workers, management commands,
+    Django shell, etc.
+    """
+    User = get_user_model()
+    user = User.objects.get(pk=user_id)
+    count = user.notifications.filter(is_read=False).count()
+    async_to_sync(channel_layer.group_send)(
+        f"user_{user_id}",
+        {"type": "notification.counter", "unread_count": count}
+    )
+
+@receiver([post_save, post_delete], sender=Notification)
+def notification_changed(sender, instance, **kwargs):
+    push_counter_sync(instance.recipient_id)

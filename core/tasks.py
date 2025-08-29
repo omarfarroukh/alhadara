@@ -21,6 +21,7 @@ User = get_user_model()
 
 logger = logging.getLogger(__name__)
 
+channel_layer = get_channel_layer()
 
 @job('default')
 def cleanup_expired_captchas_task():
@@ -72,6 +73,7 @@ def send_telegram_pin(chat_id, token):
     timeout=360,
     retry=Retry(max=3, interval=[60, 120, 240]))  # Backoff retry logic
 def send_notification_task(recipient_id, notification_type, title, message, data=None):
+    from core.signals import push_counter_sync
     """
     Base task: Creates notification and pushes via WebSocket.
     Usage: Always call with .delay() unless in tests/CLI.
@@ -83,9 +85,7 @@ def send_notification_task(recipient_id, notification_type, title, message, data
         message=message,
         data=data or {}
     )
-
     # WebSocket push
-    channel_layer = get_channel_layer()
     async_to_sync(channel_layer.group_send)(
         f"user_{recipient_id}",
         {
