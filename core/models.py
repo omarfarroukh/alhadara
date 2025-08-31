@@ -481,7 +481,9 @@ class Transaction(models.Model):
         ('withdrawal', 'Withdrawal'),
         ('course_payment', 'Course Payment'),
         ('course_refund', 'Course Refund'),
-        ('transfer', 'Transfer')
+        ('transfer', 'Transfer'),
+        ('booking_payment',  'Booking Payment'),
+        ('booking_refund',   'Booking Refund'),
     )
     
     STATUS_CHOICES = (

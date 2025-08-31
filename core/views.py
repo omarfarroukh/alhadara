@@ -583,7 +583,7 @@ class NotificationViewSet(viewsets.ReadOnlyModelViewSet):
         user_id = request.user.id
         affected = qs.update(is_read=True)
         if affected:
-            push_counter_sync(user_id)        # <── add this
+            push_counter_sync(user_id)       
         return Response({'status': 'all marked as read'})
     
     @action(detail=False, methods=['get'], url_path='unread_count')

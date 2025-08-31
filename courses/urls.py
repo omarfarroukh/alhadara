@@ -1,7 +1,7 @@
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
 from .views import (
-    DepartmentViewSet, CourseTypeViewSet, CourseViewSet,
+    DepartmentViewSet, CourseTypeViewSet, CourseViewSet, HallServiceViewSet,
     HallViewSet, ScheduleSlotViewSet, BookingViewSet, WishlistViewSet,
     UnifiedSearchViewSet, EnrollmentViewSet
 )
@@ -16,6 +16,7 @@ router.register(r'bookings', BookingViewSet, basename='booking')
 router.register(r'wishlists', WishlistViewSet, basename='wishlist')
 router.register(r'enrollments', EnrollmentViewSet, basename='enrollment')
 router.register(r'search', UnifiedSearchViewSet, basename='unified-search')
+router.register(r'hall-services', HallServiceViewSet, basename='hallservice')
 
 urlpatterns = [
     path('', include(router.urls)),

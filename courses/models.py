@@ -5,7 +5,8 @@ from django.core.validators import MinValueValidator
 from decimal import Decimal
 from datetime import date, datetime, timedelta
 from django.core.exceptions import ValidationError
-from django.core.validators import FileExtensionValidator
+from django.utils import timezone
+
 import time
 from django.contrib.auth import get_user_model
 import logging
@@ -78,7 +79,13 @@ class CourseTypeTag(models.Model):
 
     def __str__(self):
         return f"{self.course_type.name} - {self.interest or self.study_field}"
+    
+class HallService(models.Model):
+    name  = models.CharField(max_length=120, unique=True)
+    price = models.DecimalField(max_digits=8, decimal_places=2)
 
+    def __str__(self):
+        return f"{self.name} (+{self.price}/h)"
 class Hall(models.Model):
     name = models.CharField(max_length=100, unique=True)
     capacity = models.PositiveIntegerField(
@@ -92,7 +99,8 @@ class Hall(models.Model):
         validators=[MinValueValidator(0.01)],
         help_text="Must be at least 0.01"
     )
-    
+    services    = models.ManyToManyField(HallService, blank=True, related_name='halls')
+
     def __str__(self):
         return f"{self.name} ({self.location})"
     
@@ -103,7 +111,6 @@ class Hall(models.Model):
             raise ValidationError("Hourly rate must be positive")
         if self.capacity <= 0:
             raise ValidationError("Capacity must be positive")
-
 
 class Course(models.Model):
     CATEGORY_CHOICES = (
@@ -523,48 +530,168 @@ class ScheduleSlot(models.Model):
             )
 
 class Booking(models.Model):
-    PURPOSE_CHOICES = (
-        ('course', 'Course'),
-        ('tutoring', 'Tutoring'),
-        ('meeting', 'Meeting'),
-        ('event', 'Event'),
-        ('other', 'Other')
-    )
-    
     STATUS_CHOICES = (
-        ('pending', 'Pending'),
+        ('pending',  'Pending'),
         ('approved', 'Approved'),
         ('cancelled', 'Cancelled')
     )
-    
-    hall = models.ForeignKey(Hall, on_delete=models.CASCADE, related_name='bookings')
-    purpose = models.CharField(max_length=10, choices=PURPOSE_CHOICES)
-    status = models.CharField(max_length=10, choices=STATUS_CHOICES, default='pending')
-    start_datetime = models.DateTimeField()
-    end_datetime = models.DateTimeField()
-    requested_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='bookings_requested')
-    student = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, 
-                               related_name='bookings_as_student', limit_choices_to={'user_type': 'student'})
-    tutor = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True,
-                             related_name='bookings_as_tutor', limit_choices_to={'user_type': 'teacher'})
-    # Guest information fields
-    guest_name = models.CharField(max_length=255, null=True, blank=True)
-    guest_email = models.EmailField(null=True, blank=True)
-    guest_phone = models.CharField(max_length=20, null=True, blank=True)
-    guest_organization = models.CharField(max_length=255, null=True, blank=True)
-    notes = models.TextField(null=True, blank=True)
-    
-    def __str__(self):
-        return f"{self.get_purpose_display()} - {self.hall.name} ({self.start_datetime})"
-    
+    BOOKING_TYPE = (
+        ('public',  'Public'),
+        ('private', 'Private')
+    )
+    PAYMENT_METHODS = (
+        ('ewallet', 'eWallet'),
+        ('cash',    'Cash')
+    )
+
+    hall          = models.ForeignKey(Hall, on_delete=models.CASCADE,
+                                      related_name='bookings')
+    status        = models.CharField(max_length=10, choices=STATUS_CHOICES,
+                                     default='pending')
+    start_time    = models.TimeField(default='00:00:00')
+    end_time      = models.TimeField(default='12:00:00')
+    date          = models.DateField(default=date(2100, 1, 1))
+    booking_type  = models.CharField(max_length=7, choices=BOOKING_TYPE,
+                                     default='public')
+    private_surcharge = models.DecimalField(max_digits=8, decimal_places=2,
+                                            default=0)
+    requested_by  = models.ForeignKey(User, on_delete=models.SET_NULL,
+                                      null=True, blank=True,
+                                      related_name='bookings_requested')
+    student       = models.ForeignKey(User, on_delete=models.SET_NULL,
+                                      null=True, blank=True,
+                                      related_name='bookings_as_student',
+                                      limit_choices_to={'user_type': 'student'})
+    guest_name    = models.CharField(max_length=255, null=True, blank=True)
+    guest_phone   = models.CharField(max_length=20, null=True, blank=True)
+    headcount     = models.PositiveIntegerField(default=1)
+
+    # NEW
+    payment_method = models.CharField(max_length=7, choices=PAYMENT_METHODS,
+                                      null=True, blank=True)
+    amount_paid    = models.DecimalField(max_digits=10, decimal_places=2,
+                                         default=0)
+
     class Meta:
-        ordering = ['-start_datetime']
-        constraints = [
-            models.CheckConstraint(
-                condition=models.Q(start_datetime__lt=models.F('end_datetime')),
-                name='booking_start_before_end'
-            ),
-        ]
+        ordering = ['-date', '-start_time']
+
+    def __str__(self):
+        return f"{self.booking_type} – {self.hall} ({self.date} {self.start_time}-{self.end_time})"
+
+    # ---------------- pricing helpers ----------------
+    @property
+    def calculated_price(self):
+        start_dt = datetime.combine(self.date, self.start_time)
+        end_dt   = datetime.combine(self.date, self.end_time)
+        hours    = Decimal((end_dt - start_dt).total_seconds()) / Decimal(3600)
+
+        total_hourly_rate = self.hall.hourly_rate + sum(
+            s.price for s in self.hall.services.all())
+        base = total_hourly_rate * hours * self.headcount
+
+        if self.booking_type == 'private':
+            surcharge = self.private_surcharge 
+            return base + surcharge
+        return base
+
+    # ---------------- business rules ----------------
+    @property
+    def is_guest(self):
+        return self.student is None
+
+    def can_cancel(self):
+        """True until the slot’s start datetime."""
+        now = timezone.now()
+        start_dt = timezone.make_aware(
+            datetime.combine(self.date, self.start_time))
+        return now < start_dt
+
+    def process_payment(self):
+        from core.models import EWallet, Transaction
+        """Move money and create Transaction."""
+        price = self.calculated_price
+        if price <= 0:
+            raise ValidationError("Price must be positive")
+
+        admin = User.objects.get(user_type='admin')
+        admin_wallet = EWallet.objects.get(user=admin)
+
+        if self.is_guest:
+            # reception already collected cash; just record it
+            admin_wallet.deposit(price)   # <-- ADD THIS LINE
+            guest_user, _ = User.objects.get_or_create(
+                phone='guest',
+                defaults={'first_name': 'Guest',
+                          'last_name':  'User',
+                          'user_type':  'student',
+                          'is_active':  False})
+            Transaction.objects.create(
+                sender=guest_user,
+                receiver=admin,
+                amount=price,
+                transaction_type='booking_payment',
+                status='completed',
+                description=f"Cash booking #{self.id} ({self.guest_name})",
+                reference_id=f"BK-CASH-{self.id}-{int(time.time())}")
+        else:
+            # student e-wallet → admin e-wallet
+            student_wallet = EWallet.objects.get(user=self.student)
+            if student_wallet.current_balance < price:
+                raise ValidationError("Insufficient wallet balance")
+            student_wallet.withdraw(price)
+            admin_wallet.deposit(price)
+            Transaction.objects.create(
+                sender=self.student,
+                receiver=admin,
+                amount=price,
+                transaction_type='booking_payment',
+                status='completed',
+                description=f"Booking #{self.id}",
+                reference_id=f"BK-EW-{self.id}-{int(time.time())}")
+
+        self.amount_paid = price
+        self.save(update_fields=['amount_paid'])
+
+    def refund(self):
+        from core.models import EWallet, Transaction
+        """Reverse payment and create refund Transaction."""
+        if self.amount_paid <= 0:
+            return
+
+        admin = User.objects.get(user_type='admin')
+        admin_wallet = EWallet.objects.get(user=admin)
+
+        if self.is_guest:
+            guest_user, _ = User.objects.get_or_create(
+                phone='guest',
+                defaults={'first_name': 'Guest',
+                          'last_name':  'User',
+                          'user_type':  'student',
+                          'is_active':  False})
+            admin_wallet.withdraw(self.amount_paid)
+            Transaction.objects.create(
+                sender=admin,
+                receiver=guest_user,
+                amount=self.amount_paid,
+                transaction_type='booking_refund',
+                status='completed',
+                description=f"Refund booking #{self.id}",
+                reference_id=f"RF-CASH-{self.id}-{int(time.time())}")
+        else:
+            student_wallet = EWallet.objects.get(user=self.student)
+            admin_wallet.withdraw(self.amount_paid)
+            student_wallet.deposit(self.amount_paid)
+            Transaction.objects.create(
+                sender=admin,
+                receiver=self.student,
+                amount=self.amount_paid,
+                transaction_type='booking_refund',
+                status='completed',
+                description=f"Refund booking #{self.id}",
+                reference_id=f"RF-EW-{self.id}-{int(time.time())}")
+
+        self.amount_paid = 0
+        self.save(update_fields=['amount_paid'])
 
 class Wishlist(models.Model):
     owner = models.OneToOneField(

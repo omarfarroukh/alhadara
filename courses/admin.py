@@ -89,13 +89,6 @@ class ScheduleSlotAdmin(admin.ModelAdmin):
     
     def get_queryset(self, request):
         return super().get_queryset(request).select_related('course', 'hall', 'teacher')
-      
-@admin.register(Booking)
-class BookingAdmin(admin.ModelAdmin):
-    list_display = ('purpose', 'hall', 'status', 'start_datetime', 'requested_by')
-    list_filter = ('purpose', 'status', 'hall')
-    search_fields = ('requested_by__username', 'hall__name')
-    date_hierarchy = 'start_datetime'
 
 @admin.register(Enrollment)
 class EnrollmentAdmin(admin.ModelAdmin):

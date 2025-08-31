@@ -1,20 +1,22 @@
+import datetime
 from rest_framework import viewsets, permissions, filters, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework import serializers
 from django.views.decorators.cache import cache_page
 from django.utils.decorators import method_decorator
+from rest_framework.permissions import OR
 from django.core.cache import cache
 from .cache_keys import courses_list_key, COURSES_LIST_TIMEOUT
 from django.core.exceptions import ValidationError
-from .models import Department, CourseType, Course, Hall, ScheduleSlot, Booking,Wishlist, Enrollment
+from .models import Department, CourseType, Course, Hall, HallService, ScheduleSlot, Booking,Wishlist, Enrollment
 from .serializers import (
-    BaseEnrollmentSerializer, CourseCreateUpdateSerializer, DepartmentSerializer, CourseTypeSerializer, CourseSerializer, GuestEnrollmentSerializer,
-    HallSerializer, ScheduleSlotSerializer, TeacherScheduleSlotSerializer, BookingSerializer, StudentEnrollmentSerializer,WishlistSerializer,
+    BaseEnrollmentSerializer, CourseCreateUpdateSerializer, DepartmentSerializer, CourseTypeSerializer, CourseSerializer, GuestBookingSerializer, GuestEnrollmentSerializer, HallSearchQuerySerializer, HallSearchResultSerializer,
+    HallSerializer, HallServiceSerializer, ScheduleSlotSerializer, StudentBookingSerializer, TeacherScheduleSlotSerializer, StudentEnrollmentSerializer,WishlistSerializer,
     HallAvailabilityResponseSerializer
 )
 from django.db.models import Q, Count, Prefetch,Sum
-from core.permissions import IsOwnerOrAdminOrReception,IsStudent,IsTeacher,IsReception,IsAdmin
+from core.permissions import IsAdminOrReception, IsOwnerOrAdminOrReception,IsStudent,IsTeacher,IsReception,IsAdmin
 from django_filters.rest_framework import DjangoFilterBackend
 from django.contrib.auth import get_user_model
 from rest_framework.generics import get_object_or_404
@@ -23,7 +25,7 @@ from drf_spectacular.utils import extend_schema, OpenApiParameter,OpenApiRespons
 from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.openapi import OpenApiExample
 from core.models import Interest, StudyField
-from datetime import date,time
+from datetime import date,time,datetime
 from django.utils import timezone
 from django.conf import settings
 import time
@@ -435,6 +437,177 @@ class HallViewSet(viewsets.ModelViewSet):
         }
         serializer = HallAvailabilityResponseSerializer(response_data)
         return Response(serializer.data)
+    
+    @extend_schema(
+    request={'application/json': {
+        'type': 'object',
+        'properties': {
+            'service_ids': {
+                'type': 'array',
+                'items': {'type': 'integer'},
+                'example': [1, 2]
+            }
+        },
+        'required': ['service_ids']
+    }},
+    responses={200: {'description': 'Services added to hall'}}
+    )
+    @action(detail=True, methods=['post'], url_path='add-services', permission_classes=[IsReception])
+    def add_services(self, request, pk=None):
+        hall = self.get_object()
+        service_ids = request.data.get('service_ids', [])
+        services = HallService.objects.filter(id__in=service_ids)
+        if services.count() != len(service_ids):
+            return Response({'detail': 'One or more services not found'}, status=400)
+        hall.services.add(*services)
+        return Response({'detail': f'{services.count()} service(s) added to hall {hall.name}.'})
+    
+    @extend_schema(
+        request=HallSearchQuerySerializer,
+        responses={
+            200: HallSearchResultSerializer(many=True),
+            400: OpenApiResponse(description="Bad Request – invalid data"),
+        },
+        description="List halls available for the requested time slot, "
+                    "with dynamic seat count.",
+        examples=[
+            OpenApiExample(
+                "Public booking",
+                value={
+                    "booking_type": "public",
+                    "service_ids": [1, 2],
+                    "date": "2025-10-15",
+                    "start_time": "14:00:00",
+                    "end_time": "16:00:00",
+                    "headcount": 20,
+                },
+                request_only=True,
+            )
+        ],
+        methods=["POST"],
+    )
+    @action(detail=False, methods=["post"], url_path="search-for-booking")
+    def search_for_booking(self, request):
+        ser = HallSearchQuerySerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+        data = ser.validated_data
+
+        day      = data["date"]
+        start_dt = datetime.combine(day, data["start_time"])
+        end_dt   = datetime.combine(day, data["end_time"])
+        btype    = data["booking_type"]
+        svc      = data.get("service_ids", [])
+        head     = data["headcount"]
+
+        # Base queryset
+        qs = Hall.objects.all()
+
+        # 1. filter by requested services
+        if svc:
+            qs = qs.annotate(
+                matching_services_count=Count(
+                    "services",
+                    filter=Q(services__id__in=svc),
+                    distinct=True,
+                )
+            ).filter(matching_services_count=len(svc))
+
+        # 2. capacity filter – skip halls smaller than requested headcount
+        qs = qs.filter(capacity__gte=head)
+
+        # 3. build overlap queries
+        day_code = day.strftime("%a").lower()
+
+        booking_overlap = Q(
+            bookings__date=day,
+            bookings__start_time__lt=data["end_time"],
+            bookings__end_time__gt=data["start_time"],
+            bookings__status="approved",
+        )
+
+        slot_overlap = Q(
+            schedule_slots__days_of_week__contains=[day_code],
+            schedule_slots__start_time__lt=data['end_time'],
+            schedule_slots__end_time__gt=data['start_time'],
+            schedule_slots__valid_from__lte=day,
+            schedule_slots__valid_until__gte=day,
+        )
+
+        # 4. exclude unavailable halls
+        if btype == "private":
+            qs = qs.exclude(booking_overlap | slot_overlap)
+        else:
+            qs = qs.exclude(
+                Q(bookings__booking_type="private") & booking_overlap
+            ).exclude(slot_overlap)
+
+        qs = qs.distinct()
+
+        # 5. compute pricing + remaining seats
+        duration = Decimal((end_dt - start_dt).total_seconds()) / Decimal(3600)
+        results = []
+
+        for hall in qs:
+            # seats already occupied
+            booking_headcount = (
+                hall.bookings.filter(
+                    date=day,
+                    start_time__lt=data["end_time"],
+                    end_time__gt=data["start_time"],
+                    status="approved",
+                ).aggregate(total=Sum("headcount"))["total"]
+                or 0
+            )
+
+            slot_headcount = Enrollment.objects.filter(
+                schedule_slot__hall=hall,
+                schedule_slot__days_of_week__contains=[day_code],
+                schedule_slot__start_time__lt=data['end_time'],
+                schedule_slot__end_time__gt=data['start_time'],
+                schedule_slot__valid_from__lte=day,
+                schedule_slot__valid_until__gte=day,
+                status__in=['pending', 'active'],
+            ).count()
+
+            occupied_seats = booking_headcount + slot_headcount
+            remaining_seats = hall.capacity - occupied_seats
+
+            # skip if not enough seats (should never happen because of filter above,
+            # but double-check in case of race)
+            if remaining_seats < head:
+                continue
+
+            all_hall_services = hall.services.all()
+            requested_services = hall.services.filter(id__in=svc)
+
+            hourly_rate = hall.hourly_rate + sum(s.price for s in all_hall_services)
+            base_price = hourly_rate * duration * head
+            private_surcharge = Decimal("100.00") if btype == "private" else Decimal("0.00")
+            total_price = base_price + private_surcharge
+
+            results.append(
+                {
+                    "hall": hall,
+                    "included_services": all_hall_services,
+                    "matches_requested_services": requested_services,
+                    "base_price": base_price,
+                    "services_price": sum(s.price for s in all_hall_services)
+                    * duration
+                    * head,
+                    "private_surcharge": private_surcharge,
+                    "total_price": total_price,
+                    "remaining_seats": remaining_seats,
+                }
+            )
+
+        return Response(HallSearchResultSerializer(results, many=True).data)
+
+class HallServiceViewSet(viewsets.ModelViewSet):
+    queryset         = HallService.objects.all()
+    serializer_class = HallServiceSerializer
+    permission_classes = [IsAdminOrReception]   # already exists in your codebase
+    filter_backends  = [filters.SearchFilter, DjangoFilterBackend]
+    search_fields    = ['name']
 
 class ScheduleSlotViewSet(viewsets.ModelViewSet):
     queryset = ScheduleSlot.objects.all().select_related('course', 'hall', 'teacher')
@@ -614,95 +787,66 @@ class ScheduleSlotViewSet(viewsets.ModelViewSet):
 
     
 class BookingViewSet(viewsets.ModelViewSet):
-    serializer_class = BookingSerializer # Allow anyone to access
-    filter_backends = [filters.OrderingFilter]
-    ordering_fields = ['start_datetime', 'status']
-    ordering = ['start_datetime']
-    
+    queryset = Booking.objects.select_related('hall', 'student')
+    filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
+    filterset_fields = ['status', 'booking_type', 'date']
+    ordering = ['-date', '-start_time']
+
+    def get_serializer_class(self):
+        if self.action == 'create_guest':
+            return GuestBookingSerializer
+        return StudentBookingSerializer
+
     def get_permissions(self):
-        if self.action in ['approve', 'destroy']:
+        if self.action == 'create_guest':
             return [IsReception()]
-        elif self.action in ['update', 'partial_update']:
-            return [IsOwnerOrAdminOrReception()]
-        elif self.action == 'create':
-            return [permissions.AllowAny()]  # Explicitly allow anyone to create
-        return [permissions.AllowAny()]
-    
+        if self.action == 'create':
+            return [IsStudent()]
+        return [permissions.IsAuthenticated()]
+
     def get_queryset(self):
         user = self.request.user
-        if user.is_authenticated:
-            if user.is_staff:
-                return Booking.objects.all()
-            
-            if user.user_type == 'teacher':
-                return Booking.objects.filter(
-                    Q(tutor=user) | 
-                    Q(requested_by=user))
-            
-            if user.user_type == 'student':
-                return Booking.objects.filter(
-                    Q(student=user) | 
-                    Q(requested_by=user))
-            
-            return Booking.objects.filter(requested_by=user)
-        else:
-            # For anonymous users, return empty queryset (they can only create)
-            return Booking.objects.none()
-    
+        if user.is_staff or user.user_type == 'reception':
+            return self.queryset
+        return self.queryset.filter(student=user)
+
     def perform_create(self, serializer):
-        # Set requested_by if user is authenticated
-        if self.request.user.is_authenticated:
-            serializer.save(requested_by=self.request.user)
-        else:
-            serializer.save()  # Guest booking with no requested_by
-    
+        # student bookings handled in serializer
+        serializer.save()
+
+    # reception approval for guest
     @action(detail=True, methods=['post'], permission_classes=[IsReception])
     def approve(self, request, pk=None):
         booking = self.get_object()
-        
         if booking.status != 'pending':
-            return Response({'error': 'Only pending bookings can be approved'}, 
-                           status=status.HTTP_400_BAD_REQUEST)
-        
-        # Check for conflicts before approving
-        try:
-            serializer = self.get_serializer(booking, data={'status': 'approved'}, partial=True)
-            serializer.is_valid(raise_exception=True)
-        except serializers.ValidationError as e:
-            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
-        
+            return Response({'error': 'Already processed'},
+                            status=status.HTTP_400_BAD_REQUEST)
         booking.status = 'approved'
         booking.save()
-        
-        return Response({'status': 'booking approved'}, status=status.HTTP_200_OK)
-    
+        booking.process_payment()
+        return Response({'status': 'approved'})
+
+    # cancellation (student or reception)
     @action(detail=True, methods=['post'])
     def cancel(self, request, pk=None):
         booking = self.get_object()
-        
-        if booking.status == 'cancelled':
-            return Response({'error': 'Booking is already cancelled'}, 
-                           status=status.HTTP_400_BAD_REQUEST)
-        
-        # Allow cancellation by:
-        # 1. The person who made the booking (if authenticated)
-        # 2. The guest (if they have the booking ID)
-        # 3. Admin users
-        is_guest_cancellation = (
-            not request.user.is_authenticated and 
-            str(booking.id) == request.data.get('booking_id')
-        )
-        
-        if not (is_guest_cancellation or 
-                booking.requested_by == request.user or 
-                request.user.is_staff):
-            return Response({'error': 'You can only cancel your own bookings'}, 
-                          status=status.HTTP_403_FORBIDDEN)
-        
+        if not booking.can_cancel():
+            return Response({'error': 'Cancellation window closed'},
+                            status=status.HTTP_400_BAD_REQUEST)
+        booking.refund()
         booking.status = 'cancelled'
         booking.save()
-        
-        return Response({'status': 'booking cancelled'}, status=status.HTTP_200_OK)
+        return Response({'status': 'cancelled'})
+
+    # reception creates guest booking
+    @action(detail=False, methods=['post'], permission_classes=[IsReception])
+    def create_guest(self, request):
+        serializer = GuestBookingSerializer(data=request.data,
+                                            context={'request': request})
+        serializer.is_valid(raise_exception=True)
+        booking = serializer.save()
+        return Response(GuestBookingSerializer(booking).data,
+                        status=status.HTTP_201_CREATED)
 
 class WishlistViewSet(viewsets.ReadOnlyModelViewSet):
     serializer_class = WishlistSerializer

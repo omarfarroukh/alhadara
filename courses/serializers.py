@@ -1,12 +1,14 @@
+from datetime import datetime
 from decimal import Decimal
 from unicodedata import category
 from rest_framework import serializers
-from .models import Department, CourseType, Course, Hall, ScheduleSlot, Booking, Wishlist, Enrollment
+from .models import Department, CourseType, Course, Hall, HallService, ScheduleSlot, Booking, Wishlist, Enrollment
 from lessons.models import Lesson
 from django.core.exceptions import ValidationError
 from django.contrib.auth import get_user_model
 from core.translation import translate_text
 import logging
+from django.db.models import Q
 logger = logging.getLogger(__name__)
 
 
@@ -338,67 +340,6 @@ class TeacherScheduleSlotSerializer(ScheduleSlotSerializer):
         
         return students
     
-
-
-class BookingSerializer(serializers.ModelSerializer):
-    hall_name = serializers.ReadOnlyField(source='hall.name')
-    requested_by_username = serializers.ReadOnlyField(source='requested_by.username', default=None)
-    student_username = serializers.ReadOnlyField(source='student.username', default=None)
-    tutor_username = serializers.ReadOnlyField(source='tutor.username', default=None)
-    purpose_display = serializers.ReadOnlyField(source='get_purpose_display')
-    status_display = serializers.ReadOnlyField(source='get_status_display')
-    
-    class Meta:
-        model = Booking
-        fields = (
-            'id', 'hall', 'hall_name', 'purpose', 'purpose_display',
-            'status', 'status_display', 'start_datetime', 'end_datetime',
-            'requested_by', 'requested_by_username', 'student', 'student_username',
-            'tutor', 'tutor_username', 'guest_name', 'guest_email', 'guest_phone',
-            'guest_organization', 'notes'
-        )
-        read_only_fields = ('requested_by', 'status')
-    
-    def validate(self, data):
-        # Check if end time is after start time
-        if data['start_datetime'] >= data['end_datetime']:
-            raise serializers.ValidationError("End time must be after start time")
-        
-        # Check for overlapping bookings
-        overlapping_bookings = Booking.objects.filter(
-            hall=data['hall'],
-            start_datetime__lt=data['end_datetime'],
-            end_datetime__gt=data['start_datetime'],
-            status='approved'
-        ).exclude(id=self.instance.id if self.instance else None)
-        
-        if overlapping_bookings.exists():
-            raise serializers.ValidationError("The hall is already booked for this time slot")
-        
-        # Check for overlapping schedule slots
-        if data['start_datetime'].date() == data['end_datetime'].date():  # Single day booking
-            day_of_week = data['start_datetime'].strftime('%a').lower()
-            
-            overlapping_slots = ScheduleSlot.objects.filter(
-                hall=data['hall'],
-                days_of_week__contains=[day_of_week],
-                start_time__lt=data['end_datetime'].time(),
-                end_time__gt=data['start_datetime'].time(),
-                valid_from__lte=data['start_datetime'].date(),
-                valid_until__gte=data['start_datetime'].date()
-            )
-            
-            if overlapping_slots.exists():
-                raise serializers.ValidationError(
-                    "The hall is already scheduled for a course during this time")
-        
-        return data
-    
-    def create(self, validated_data):
-        if self.context['request'].user.is_authenticated:
-            validated_data['requested_by'] = self.context['request'].user
-        return super().create(validated_data)
-
 class WishlistCourseSerializer(serializers.ModelSerializer):
     course_type_name = serializers.ReadOnlyField(source='course_type.name')
     department_name = serializers.ReadOnlyField(source='department.name')
@@ -599,3 +540,83 @@ class HallAvailabilityResponseSerializer(serializers.Serializer):
     hall_name = serializers.CharField()
     free_periods = HallFreePeriodSerializer(many=True)
     
+    
+class HallServiceSerializer(serializers.ModelSerializer):
+    class Meta:
+        model  = HallService
+        fields = ('id', 'name', 'price')
+        
+class HallSearchQuerySerializer(serializers.Serializer):
+    booking_type = serializers.ChoiceField(
+        choices=(('public', 'Public'), ('private', 'Private')),
+        help_text="Type of booking: 'public' or 'private'"
+    )
+    service_ids = serializers.ListField(
+        child=serializers.IntegerField(),
+        allow_empty=True,
+        help_text="List of service IDs to filter halls that offer these services"
+    )
+    date = serializers.DateField(help_text="Booking date (YYYY-MM-DD)")
+    start_time = serializers.TimeField(help_text="Start time (HH:MM:SS)", format='%H:%M:%S')
+    end_time = serializers.TimeField(help_text="End time (HH:MM:SS)", format='%H:%M:%S')
+    headcount = serializers.IntegerField(min_value=1, default=1, help_text="Number of people attending")
+
+    def validate(self, data):
+        if data['start_time'] >= data['end_time']:
+            raise serializers.ValidationError("End time must be after start time.")
+        return data
+    
+class HallSearchResultSerializer(serializers.Serializer):
+    hall = serializers.SerializerMethodField()
+    included_services = HallServiceSerializer(many=True)
+    matches_requested_services = HallServiceSerializer(many=True)
+    base_price = serializers.DecimalField(max_digits=10, decimal_places=2)
+    services_price = serializers.DecimalField(max_digits=10, decimal_places=2)
+    private_surcharge = serializers.DecimalField(max_digits=10, decimal_places=2)
+    total_price = serializers.DecimalField(max_digits=10, decimal_places=2)
+    remaining_seats = serializers.IntegerField()
+
+    
+    def get_hall(self, obj):
+        from .serializers import HallSerializer  # Avoid circular import
+        return HallSerializer(obj['hall']).data
+    
+    
+class StudentBookingSerializer(serializers.ModelSerializer):
+    hall_name = serializers.CharField(source='hall.name', read_only=True)
+    calculated_price = serializers.ReadOnlyField()
+
+    class Meta:
+        model = Booking
+        fields = ('id', 'hall', 'hall_name', 'date', 'start_time', 'end_time',
+                  'booking_type', 'headcount', 'calculated_price')
+        read_only_fields = ('calculated_price',)
+
+    def create(self, validated):
+        validated['student'] = self.context['request'].user
+        validated['payment_method'] = 'ewallet'
+        if validated['booking_type'] == 'private':
+            validated['private_surcharge'] = 100
+        booking = super().create(validated)
+        booking.status = 'approved'
+        booking.save()
+        booking.process_payment()
+        return booking
+
+
+class GuestBookingSerializer(serializers.ModelSerializer):
+    hall_name = serializers.CharField(source='hall.name', read_only=True)
+    calculated_price = serializers.ReadOnlyField()
+
+    class Meta:
+        model = Booking
+        fields = ('id', 'hall', 'hall_name', 'date', 'start_time', 'end_time',
+                  'booking_type', 'headcount', 'guest_name', 'guest_phone',
+                  'calculated_price')
+        read_only_fields = ('calculated_price',)
+
+    def create(self, validated):
+        validated['payment_method'] = 'cash'
+        if validated['booking_type'] == 'private':
+            validated['private_surcharge'] = 100
+        return super().create(validated)
