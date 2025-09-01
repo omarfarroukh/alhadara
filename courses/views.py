@@ -603,11 +603,17 @@ class HallViewSet(viewsets.ModelViewSet):
         return Response(HallSearchResultSerializer(results, many=True).data)
 
 class HallServiceViewSet(viewsets.ModelViewSet):
-    queryset         = HallService.objects.all()
+    queryset = HallService.objects.all()
     serializer_class = HallServiceSerializer
-    permission_classes = [IsAdminOrReception]   # already exists in your codebase
-    filter_backends  = [filters.SearchFilter, DjangoFilterBackend]
-    search_fields    = ['name']
+
+    def get_permissions(self):
+        # Everyone can list/retrieve; only admin/reception can create/update/destroy
+        if self.action in ("list", "retrieve"):
+            return [permissions.AllowAny()]         # or IsAuthenticated() if you prefer
+        return [IsAdminOrReception()]               # your original permission class
+
+    filter_backends = [filters.SearchFilter, DjangoFilterBackend]
+    search_fields = ["name"]
 
 class ScheduleSlotViewSet(viewsets.ModelViewSet):
     queryset = ScheduleSlot.objects.all().select_related('course', 'hall', 'teacher')
