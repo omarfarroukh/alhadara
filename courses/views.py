@@ -605,7 +605,7 @@ class HallViewSet(viewsets.ModelViewSet):
 class HallServiceViewSet(viewsets.ModelViewSet):
     queryset         = HallService.objects.all()
     serializer_class = HallServiceSerializer
-    permission_classes = [IsAdminOrReception]   # already exists in your codebase
+    permission_classes = [permissions.AllowAny]   # already exists in your codebase
     filter_backends  = [filters.SearchFilter, DjangoFilterBackend]
     search_fields    = ['name']
 
