@@ -12,16 +12,6 @@ services:
       - .env
     networks: ["shared"]
 
-  libretranslate:
-    image: libretranslate/libretranslate:latest
-    ports:
-      - "5000:5000"
-    command: --load-only en,ar --char-limit 5000 --req-limit 1000
-    environment:
-      - LT_CHAR_LIMIT=5000
-      - LT_REQ_LIMIT=1000
-    networks: ["shared"]
-
 
   rqworker:
     build: .

@@ -9,9 +9,9 @@ from rest_framework.permissions import OR
 from django.core.cache import cache
 from .cache_keys import courses_list_key, COURSES_LIST_TIMEOUT
 from django.core.exceptions import ValidationError
-from .models import Department, CourseType, Course, Hall, HallService, ScheduleSlot, Booking,Wishlist, Enrollment
+from .models import CourseImage, CourseTypeIcon, Department, CourseType, Course, DepartmentIcon, Hall, HallService, ScheduleSlot, Booking,Wishlist, Enrollment
 from .serializers import (
-    BaseEnrollmentSerializer, CourseCreateUpdateSerializer, DepartmentSerializer, CourseTypeSerializer, CourseSerializer, GuestBookingSerializer, GuestEnrollmentSerializer, HallSearchQuerySerializer, HallSearchResultSerializer,
+    BaseEnrollmentSerializer, CourseCreateUpdateSerializer, CourseImageSerializer, CourseTypeIconSerializer, DepartmentIconSerializer, DepartmentSerializer, CourseTypeSerializer, CourseSerializer, GuestBookingSerializer, GuestEnrollmentSerializer, HallSearchQuerySerializer, HallSearchResultSerializer,
     HallSerializer, HallServiceSerializer, ScheduleSlotSerializer, StudentBookingSerializer, TeacherScheduleSlotSerializer, StudentEnrollmentSerializer,WishlistSerializer,
     HallAvailabilityResponseSerializer
 )
@@ -37,8 +37,10 @@ from core.tasks import (
 import logging
 logger = logging.getLogger(__name__)
 User = get_user_model()
+
+
 class DepartmentViewSet(viewsets.ModelViewSet):
-    queryset = Department.objects.all()
+    queryset = Department.objects.all().select_related('icon')
     serializer_class = DepartmentSerializer
     filter_backends = [filters.SearchFilter]
     search_fields = ['name', 'description']
@@ -66,8 +68,33 @@ class DepartmentViewSet(viewsets.ModelViewSet):
         self.perform_create(serializer)
         return Response(serializer.data, status=status.HTTP_201_CREATED)
     
+class DepartmentIconViewSet(viewsets.ModelViewSet):
+    queryset = DepartmentIcon.objects.all()
+    serializer_class = DepartmentIconSerializer
+   
+    @extend_schema(
+        description="Upload or update an icon for a department",
+        request={
+            'multipart/form-data': {
+                'type': 'object',
+                'properties': {
+                    'department': {'type': 'integer', 'description': 'Department ID'},
+                    'image': {'type': 'string', 'format': 'binary'},
+                },
+                'required': ['department', 'image']
+            }
+        }
+    )
+    def create(self, request, *args, **kwargs):
+        return super().create(request, *args, **kwargs)
+    
+    def get_permissions(self):
+        if self.action in ('create', 'update', 'partial_update', 'destroy'):
+            return [IsAdminOrReception()]
+        return [permissions.AllowAny()]
+    
 class CourseTypeViewSet(viewsets.ModelViewSet):
-    queryset = CourseType.objects.all().select_related('department')
+    queryset = CourseType.objects.all().select_related('department', 'icon')
     serializer_class = CourseTypeSerializer
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_fields = ['department','department__name']  # Auto-Swagger docs
@@ -190,7 +217,31 @@ class CourseTypeViewSet(viewsets.ModelViewSet):
         course_type = self.get_object()
         return Response(course_type.get_tags())
 
-
+class CourseTypeIconViewSet(viewsets.ModelViewSet):
+    queryset = CourseTypeIcon.objects.all()
+    serializer_class = CourseTypeIconSerializer
+    
+    @extend_schema(
+        description="Upload or update an icon for a course type",
+        request={
+            'multipart/form-data': {
+                'type': 'object',
+                'properties': {
+                    'course_type': {'type': 'integer', 'description': 'CourseType ID'},
+                    'image': {'type': 'string', 'format': 'binary'},
+                },
+                'required': ['course_type', 'image']
+            }
+        }
+    )
+    def create(self, request, *args, **kwargs):
+        return super().create(request, *args, **kwargs)
+    
+    def get_permissions(self):
+        if self.action in ('create', 'update', 'partial_update', 'destroy'):
+            return [IsAdminOrReception()]
+        return [permissions.AllowAny()]
+    
 class CourseViewSet(viewsets.ModelViewSet):
     queryset = Course.objects.none()
     serializer_class = CourseSerializer
@@ -283,7 +334,7 @@ class CourseViewSet(viewsets.ModelViewSet):
             'department'
         ).prefetch_related(
             'schedule_slots',
-            'wishlists'  # Always prefetch for count
+            'wishlists', 'images'  # Always prefetch for count
         ).annotate(
             wishlist_count=Count('wishlists', distinct=True)
         )        
@@ -341,6 +392,33 @@ class CourseViewSet(viewsets.ModelViewSet):
         recommended_courses = Course.get_recommended_courses(request.user, limit=limit)
         serializer = self.get_serializer(recommended_courses, many=True)
         return Response(serializer.data)
+
+class CourseImageViewSet(viewsets.ModelViewSet):
+    queryset = CourseImage.objects.all()
+    serializer_class = CourseImageSerializer
+    filterset_fields = ['course']
+    
+    @extend_schema(
+        description="Upload or update an image for a course",
+        request={
+            'multipart/form-data': {
+                'type': 'object',
+                'properties': {
+                    'course': {'type': 'integer', 'description': 'Course ID'},
+                    'image': {'type': 'string', 'format': 'binary'},
+                },
+                'required': ['course', 'image']
+            }
+        }
+    )
+    def create(self, request, *args, **kwargs):
+        return super().create(request, *args, **kwargs)
+    
+    def get_permissions(self):
+        if self.action in ('create', 'update', 'partial_update', 'destroy'):
+            return [IsAdminOrReception()]
+        return [permissions.AllowAny()]
+
 
 class HallViewSet(viewsets.ModelViewSet):
     queryset = Hall.objects.all()

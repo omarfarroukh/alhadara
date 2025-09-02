@@ -6,6 +6,8 @@ from decimal import Decimal
 from datetime import date, datetime, timedelta
 from django.core.exceptions import ValidationError
 from django.utils import timezone
+from django.core.validators import FileExtensionValidator
+
 
 import time
 from django.contrib.auth import get_user_model
@@ -23,6 +25,20 @@ class Department(models.Model):
     class Meta:
         ordering = ['name']  
 
+class DepartmentIcon(models.Model):
+    department = models.OneToOneField(
+        Department,
+        on_delete=models.CASCADE,
+        related_name='icon'
+    )
+    image = models.ImageField(
+        upload_to='department_icons/',
+        validators=[FileExtensionValidator(allowed_extensions=['jpg', 'jpeg', 'png', 'svg', 'webp'])]
+    )
+    uploaded_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"Icon for {self.department.name}"
 
 class CourseType(models.Model):
     name = models.CharField(max_length=100, unique=True)
@@ -69,6 +85,22 @@ class CourseType(models.Model):
             'interests': list(self.tags.filter(interest__isnull=False).values_list('interest__name', flat=True)),
             'study_fields': list(self.tags.filter(study_field__isnull=False).values_list('study_field__name', flat=True))
         }
+
+class CourseTypeIcon(models.Model):
+    course_type = models.OneToOneField(
+        CourseType,
+        on_delete=models.CASCADE,
+        related_name='icon'
+    )
+    image = models.ImageField(
+        upload_to='course_type_icons/',
+        validators=[FileExtensionValidator(allowed_extensions=['jpg', 'jpeg', 'png', 'svg', 'webp'])]
+    )
+    uploaded_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"Icon for {self.course_type.name}"
+
 class CourseTypeTag(models.Model):
     course_type = models.ForeignKey(CourseType, on_delete=models.CASCADE, related_name='tags')
     interest = models.ForeignKey(Interest, on_delete=models.CASCADE, null=True, blank=True)
@@ -353,6 +385,20 @@ class Course(models.Model):
         
         # Return the diversified list, limited to the requested amount
         return recommended_courses[:limit]
+
+class CourseImage(models.Model):
+    course = models.ForeignKey(Course, on_delete=models.CASCADE, related_name='images')
+    image = models.ImageField(
+        upload_to='course_images/',
+        validators=[FileExtensionValidator(allowed_extensions=['jpg', 'jpeg', 'png', 'webp'])]
+    )
+    uploaded_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"images for {self.course.title}"
+
+    class Meta:
+        ordering = ['-uploaded_at']
 
 class ScheduleSlot(models.Model):
     DAY_CHOICES = (

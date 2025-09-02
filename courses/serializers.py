@@ -2,7 +2,7 @@ from datetime import datetime
 from decimal import Decimal
 from unicodedata import category
 from rest_framework import serializers
-from .models import Department, CourseType, Course, Hall, HallService, ScheduleSlot, Booking, Wishlist, Enrollment
+from .models import CourseImage, CourseTypeIcon, Department, CourseType, Course, DepartmentIcon, Hall, HallService, ScheduleSlot, Booking, Wishlist, Enrollment
 from lessons.models import Lesson
 from django.core.exceptions import ValidationError
 from django.contrib.auth import get_user_model
@@ -14,18 +14,43 @@ logger = logging.getLogger(__name__)
 
 User = get_user_model()
 
+class DepartmentIconSerializer(serializers.ModelSerializer):
+    image_url = serializers.SerializerMethodField()
+
+    class Meta:
+        model  = DepartmentIcon
+        fields = ('id', 'image', 'image_url', 'uploaded_at', 'department')
+
+    def get_image_url(self, obj):
+        request = self.context.get('request')
+        return request.build_absolute_uri(obj.image.url) if obj.image and request else None
+    
 class DepartmentSerializer(serializers.ModelSerializer):
+    icon = DepartmentIconSerializer(read_only=True)
+
     class Meta:
         model = Department
-        fields = ('id', 'name', 'description')
+        fields = ('id', 'name', 'description', 'icon')
         
+class CourseTypeIconSerializer(serializers.ModelSerializer):
+    image_url = serializers.SerializerMethodField()
+
+    class Meta:
+        model  = CourseTypeIcon
+        fields = ('id', 'image', 'image_url', 'uploaded_at', 'course_type')
+
+    def get_image_url(self, obj):
+        request = self.context.get('request')
+        return request.build_absolute_uri(obj.image.url) if obj.image and request else None
+    
 class CourseTypeSerializer(serializers.ModelSerializer):
     department_name = serializers.ReadOnlyField(source='department.name')
     tags = serializers.SerializerMethodField()
-    
+    icon = CourseTypeIconSerializer(read_only=True)
+
     class Meta:
         model = CourseType
-        fields = ('id', 'name', 'department', 'department_name', 'tags')
+        fields = ('id', 'name', 'department', 'department_name', 'tags', 'icon')
     
     def get_tags(self, obj):
         return obj.get_tags()
@@ -65,7 +90,20 @@ class HallSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError(e.messages if hasattr(e, 'messages') else str(e))
         
         return data
-    
+
+class CourseImageSerializer(serializers.ModelSerializer):
+    image_url = serializers.SerializerMethodField()
+
+    class Meta:
+        model  = CourseImage
+        fields = ('id', 'image', 'image_url', 'uploaded_at', 'course')
+
+    def get_image_url(self, obj):
+        request = self.context.get('request')
+        return request.build_absolute_uri(obj.image.url) if obj.image and request else None
+
+
+ 
 class CourseSerializer(serializers.ModelSerializer):
     title            = serializers.SerializerMethodField()
     description      = serializers.SerializerMethodField()
@@ -74,7 +112,8 @@ class CourseSerializer(serializers.ModelSerializer):
     course_type_name = serializers.SerializerMethodField()
     is_in_wishlist = serializers.SerializerMethodField()
     wishlist_count = serializers.SerializerMethodField(read_only=True)
-    
+    images = CourseImageSerializer(many=True, read_only=True)
+
     # Language requirements
     required_language_name = serializers.SerializerMethodField()
     required_language_level_display = serializers.SerializerMethodField()
@@ -87,7 +126,7 @@ class CourseSerializer(serializers.ModelSerializer):
             'max_students', 'certification_eligible', 'department', 
             'department_name', 'course_type', 'course_type_name', 'category',
             'is_in_wishlist', 'wishlist_count', 'required_language', 'required_language_name',
-            'required_language_level', 'required_language_level_display', 'language_requirement_met'
+            'required_language_level', 'required_language_level_display', 'language_requirement_met', 'images'
         )
 
     
