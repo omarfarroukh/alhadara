@@ -5,7 +5,7 @@ from django.core.cache import cache
 # ------------------------------------------------------------------
 # Configuration
 # ------------------------------------------------------------------
-LT_HOST = os.getenv("LT_HOST", "https://libretranslate.com")  # Back to local instance
+LT_HOST = os.getenv("LT_HOST", "http://libretranslate:5000")  # Back to local instance
 LT_API_KEY = os.getenv("LT_API_KEY", None)  # Optional API key
 GLOSSARY_PATH = Path(__file__).parent / "fixtures" / "glossary.yml"
 
