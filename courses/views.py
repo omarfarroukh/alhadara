@@ -9,9 +9,9 @@ from rest_framework.permissions import OR
 from django.core.cache import cache
 from .cache_keys import courses_list_key, COURSES_LIST_TIMEOUT
 from django.core.exceptions import ValidationError
-from .models import CourseImage, CourseTypeIcon, Department, CourseType, Course, DepartmentIcon, Hall, HallService, ScheduleSlot, Booking,Wishlist, Enrollment
+from .models import CourseDiscount, CourseImage, CourseTypeIcon, Department, CourseType, Course, DepartmentIcon, Hall, HallService, ScheduleSlot, Booking,Wishlist, Enrollment
 from .serializers import (
-    BaseEnrollmentSerializer, CourseCreateUpdateSerializer, CourseImageSerializer, CourseTypeIconSerializer, DepartmentIconSerializer, DepartmentSerializer, CourseTypeSerializer, CourseSerializer, GuestBookingSerializer, GuestEnrollmentSerializer, HallSearchQuerySerializer, HallSearchResultSerializer,
+    BaseEnrollmentSerializer, CourseCreateUpdateSerializer, CourseDiscountCreateSerializer, CourseDiscountSerializer, CourseImageSerializer, CourseTypeIconSerializer, DepartmentIconSerializer, DepartmentSerializer, CourseTypeSerializer, CourseSerializer, GuestBookingSerializer, GuestEnrollmentSerializer, HallSearchQuerySerializer, HallSearchResultSerializer,
     HallSerializer, HallServiceSerializer, ScheduleSlotSerializer, StudentBookingSerializer, TeacherScheduleSlotSerializer, StudentEnrollmentSerializer,WishlistSerializer,
     HallAvailabilityResponseSerializer
 )
@@ -392,6 +392,63 @@ class CourseViewSet(viewsets.ModelViewSet):
         recommended_courses = Course.get_recommended_courses(request.user, limit=limit)
         serializer = self.get_serializer(recommended_courses, many=True)
         return Response(serializer.data)
+
+    
+    @extend_schema(
+        parameters=[
+            OpenApiParameter(
+                name='lang',
+                type=OpenApiTypes.STR,
+                location=OpenApiParameter.QUERY,
+                description='Language code',
+                required=False
+            ),
+            OpenApiParameter(
+                name='min_discount',
+                type=OpenApiTypes.INT,
+                location=OpenApiParameter.QUERY,
+                description='Minimum discount percentage',
+                required=False
+            )
+        ]
+    )
+    @action(detail=False, methods=['get'])
+    def deals(self, request):
+        """Get courses with active discounts (deals)"""
+        # Get courses with active discounts
+        now = timezone.now()
+        discounted_courses = self.get_queryset().filter(
+            discount__status='active',
+            discount__start_date__lte=now,
+            discount__end_date__gte=now
+        ).select_related('discount')
+        
+        # Apply minimum discount filter if provided
+        min_discount = request.query_params.get('min_discount')
+        if min_discount:
+            try:
+                min_discount = int(min_discount)
+                # Filter by discount percentage
+                filtered_courses = []
+                for course in discounted_courses:
+                    if course.discount.discount_percentage >= min_discount:
+                        filtered_courses.append(course)
+                discounted_courses = filtered_courses
+            except ValueError:
+                return Response(
+                    {'error': 'min_discount must be an integer'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+        
+        if not discounted_courses:
+            return Response(
+                {'message': 'No deals available at the moment'},
+                status=status.HTTP_200_OK
+            )
+        
+        serializer = self.get_serializer(discounted_courses, many=True)
+        return Response(serializer.data)
+
 
 class CourseImageViewSet(viewsets.ModelViewSet):
     queryset = CourseImage.objects.all()
@@ -1618,3 +1675,42 @@ class UnifiedSearchViewSet(viewsets.ViewSet):
         
         return Response(suggestions, status=status.HTTP_200_OK)
     
+    
+    
+class CourseDiscountViewSet(viewsets.ModelViewSet):
+    queryset = CourseDiscount.objects.all()
+    serializer_class = CourseDiscountSerializer
+    permission_classes = [IsAdminOrReception]
+    filter_backends = [DjangoFilterBackend]
+    filterset_fields = ['status', 'discount_type', 'course']
+    
+    def get_serializer_class(self):
+        if self.action == 'create':
+            return CourseDiscountCreateSerializer
+        return CourseDiscountSerializer
+    
+    def get_queryset(self):
+        return CourseDiscount.objects.select_related('course').all()
+    
+    @action(detail=True, methods=['post'])
+    def cancel(self, request, pk=None):
+        """Cancel a discount"""
+        discount = self.get_object()
+        
+        if discount.status == 'cancelled':
+            return Response(
+                {'error': 'Discount is already cancelled'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        if discount.status == 'expired':
+            return Response(
+                {'error': 'Cannot cancel expired discount'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        discount.cancel_discount()
+        return Response(
+            {'message': 'Discount cancelled successfully'},
+            status=status.HTTP_200_OK
+        )

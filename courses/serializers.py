@@ -2,7 +2,7 @@ from datetime import datetime
 from decimal import Decimal
 from unicodedata import category
 from rest_framework import serializers
-from .models import CourseImage, CourseTypeIcon, Department, CourseType, Course, DepartmentIcon, Hall, HallService, ScheduleSlot, Booking, Wishlist, Enrollment
+from .models import CourseDiscount, CourseImage, CourseTypeIcon, Department, CourseType, Course, DepartmentIcon, Hall, HallService, ScheduleSlot, Booking, Wishlist, Enrollment
 from lessons.models import Lesson
 from django.core.exceptions import ValidationError
 from django.contrib.auth import get_user_model
@@ -10,6 +10,7 @@ from core.translation import translate_text
 import logging
 from django.db.models import Q
 from django.db import transaction
+from django.utils import timezone
 
 logger = logging.getLogger(__name__)
 
@@ -121,6 +122,12 @@ class CourseSerializer(serializers.ModelSerializer):
     required_language_level_display = serializers.SerializerMethodField()
     language_requirement_met = serializers.SerializerMethodField()
     
+    
+    #discount fields
+    has_discount = serializers.SerializerMethodField()
+    discount_info = serializers.SerializerMethodField()
+    original_price = serializers.SerializerMethodField()
+    
     class Meta:
         model = Course
         fields = (
@@ -128,7 +135,8 @@ class CourseSerializer(serializers.ModelSerializer):
             'max_students', 'certification_eligible', 'department', 
             'department_name', 'course_type', 'course_type_name', 'category',
             'is_in_wishlist', 'wishlist_count', 'required_language', 'required_language_name',
-            'required_language_level', 'required_language_level_display', 'language_requirement_met', 'images'
+            'required_language_level', 'required_language_level_display', 'language_requirement_met', 'images',
+            'has_discount', 'discount_info', 'original_price'
         )
 
     
@@ -184,6 +192,27 @@ class CourseSerializer(serializers.ModelSerializer):
             return dict(obj.required_language_level.LEVEL_CHOICES)[obj.required_language_level.level]
         return None
     
+    def get_has_discount(self, obj):
+        """Check if course has an active discount"""
+        return hasattr(obj, 'discount') and obj.discount.is_active
+    
+    def get_discount_info(self, obj):
+        """Get discount information if available"""
+        if hasattr(obj, 'discount') and obj.discount.is_active:
+            return {
+                'discount_percentage': round(obj.discount.discount_percentage, 1),
+                'original_price': str(obj.discount.original_price),
+                'savings': str(obj.discount.original_price - obj.discount.discounted_price),
+                'end_date': obj.discount.end_date.isoformat()
+            }
+        return None
+    
+    def get_original_price(self, obj):
+        """Get original price (useful when discount is active)"""
+        if hasattr(obj, 'discount'):
+            return str(obj.discount.original_price)
+        return str(obj.price)
+    
     def validate(self, data):
         """
         Use Django model validation by creating a temporary instance
@@ -209,6 +238,7 @@ class CourseSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError(e.messages if hasattr(e, 'messages') else str(e))
         
         return data        
+    
 class CourseCreateUpdateSerializer(serializers.ModelSerializer):
     class Meta:
         model = Course
@@ -741,3 +771,93 @@ class GuestBookingSerializer(serializers.ModelSerializer):
         if validated['booking_type'] == 'private':
             validated['private_surcharge'] = 100
         return super().create(validated)
+    
+    
+class CourseDiscountSerializer(serializers.ModelSerializer):
+    discount_percentage = serializers.ReadOnlyField()
+    is_active = serializers.ReadOnlyField()
+    course_title = serializers.CharField(source='course.title', read_only=True)
+    time_remaining = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = CourseDiscount
+        fields = [
+            'id', 'course', 'course_title', 'discount_type', 'discount_value',
+            'original_price', 'discounted_price', 'discount_percentage',
+            'start_date', 'end_date', 'status', 'is_active', 'time_remaining',
+            'created_at'
+        ]
+        read_only_fields = ['id', 'discounted_price', 'created_at']
+    
+    def get_time_remaining(self, obj):
+        """Get time remaining for active discounts"""
+        if obj.status == 'active' and obj.end_date:
+            now = timezone.now()
+            if now < obj.end_date:
+                remaining = obj.end_date - now
+                return {
+                    'days': remaining.days,
+                    'hours': remaining.seconds // 3600,
+                    'minutes': (remaining.seconds % 3600) // 60
+                }
+        return None
+    
+    def validate(self, data):
+        """Validate discount data"""
+        start_date = data.get('start_date')
+        end_date = data.get('end_date')
+        course = data.get('course')
+        
+        if start_date and end_date and start_date >= end_date:
+            raise serializers.ValidationError("End date must be after start date")
+        
+        if course and hasattr(course, 'discount'):
+            if self.instance != course.discount:
+                raise serializers.ValidationError("Course already has an active discount")
+        
+        return data
+    
+class CourseDiscountCreateSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = CourseDiscount
+        fields = [
+            'course', 'discount_type', 'discount_value',
+            'start_date', 'end_date'
+        ]
+    
+    def create(self, validated_data):
+        """Create discount and schedule RQ jobs"""
+        from .tasks import apply_course_discount, remove_course_discount
+        import django_rq
+        
+        # Set original price
+        course = validated_data['course']
+        validated_data['original_price'] = course.price
+        
+        discount = super().create(validated_data)
+        
+        # Schedule RQ jobs
+        scheduler = django_rq.get_scheduler('default')
+        
+        # Schedule activation job
+        if discount.start_date > timezone.now():
+            activation_job = scheduler.enqueue_at(
+                discount.start_date,
+                apply_course_discount,
+                discount.id
+            )
+            discount.activation_job_id = activation_job.id
+        else:
+            # Apply immediately if start date is now or in the past
+            discount.apply_discount()
+        
+        # Schedule expiration job
+        expiration_job = scheduler.enqueue_at(
+            discount.end_date,
+            remove_course_discount,
+            discount.id
+        )
+        discount.expiration_job_id = expiration_job.id
+        discount.save(update_fields=['activation_job_id', 'expiration_job_id'])
+        
+        return discount

@@ -5,6 +5,7 @@ from django.core.validators import MinValueValidator
 from decimal import Decimal, ROUND_HALF_UP
 from datetime import date, datetime, timedelta
 from django.core.exceptions import ValidationError
+import uuid
 from django.utils import timezone
 from django.core.validators import FileExtensionValidator
 
@@ -1143,3 +1144,148 @@ class Enrollment(models.Model):
         self.update_status()
         super().save(*args, **kwargs)
     
+class CourseDiscount(models.Model):
+    DISCOUNT_TYPE_CHOICES = [
+        ('percentage', 'Percentage'),
+        ('fixed', 'Fixed Amount'),
+    ]
+    
+    STATUS_CHOICES = [
+        ('active', 'Active'),
+        ('expired', 'Expired'),
+        ('cancelled', 'Cancelled'),
+    ]
+    
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    course = models.OneToOneField(
+        'Course', 
+        on_delete=models.CASCADE, 
+        related_name='discount'
+    )
+    
+    # Discount details
+    discount_type = models.CharField(max_length=10, choices=DISCOUNT_TYPE_CHOICES)
+    discount_value = models.DecimalField(
+        max_digits=10, 
+        decimal_places=2,
+        validators=[MinValueValidator(Decimal('0.01'))],
+        help_text="For percentage: 1-99, For fixed: amount in currency"
+    )
+    
+    # Price tracking
+    original_price = models.DecimalField(max_digits=10, decimal_places=2)
+    discounted_price = models.DecimalField(max_digits=10, decimal_places=2)
+    
+    # Time management
+    start_date = models.DateTimeField()
+    end_date = models.DateTimeField()
+    
+    # Status and metadata
+    status = models.CharField(max_length=10, choices=STATUS_CHOICES, default='active')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    # RQ job tracking
+    activation_job_id = models.CharField(max_length=100, blank=True, null=True)
+    expiration_job_id = models.CharField(max_length=100, blank=True, null=True)
+    
+    class Meta:
+        constraints = [
+            models.CheckConstraint(
+                check=models.Q(end_date__gt=models.F('start_date')),
+                name='end_date_after_start_date'
+            ),
+            models.CheckConstraint(
+                check=models.Q(discounted_price__lt=models.F('original_price')),
+                name='discounted_price_less_than_original'
+            )
+        ]
+        indexes = [
+            models.Index(fields=['status', 'start_date', 'end_date']),
+            models.Index(fields=['course', 'status']),
+        ]
+    
+    def clean(self):
+        super().clean()
+        
+        if self.start_date and self.end_date:
+            if self.start_date >= self.end_date:
+                raise ValidationError("End date must be after start date")
+        
+        if self.discount_type == 'percentage':
+            if not (1 <= self.discount_value <= 99):
+                raise ValidationError("Percentage discount must be between 1 and 99")
+        
+        if self.discount_type == 'fixed':
+            if self.discount_value >= self.original_price:
+                raise ValidationError("Fixed discount cannot be greater than or equal to original price")
+    
+    def calculate_discounted_price(self):
+        """Calculate the discounted price based on discount type and value"""
+        if self.discount_type == 'percentage':
+            discount_amount = (self.original_price * self.discount_value) / 100
+            return self.original_price - discount_amount
+        else:  # fixed
+            return self.original_price - self.discount_value
+    
+    def save(self, *args, **kwargs):
+        # Set original price if not set
+        if not self.original_price:
+            self.original_price = self.course.price
+        
+        # Calculate discounted price
+        self.discounted_price = self.calculate_discounted_price()
+        
+        super().save(*args, **kwargs)
+    
+    def apply_discount(self):
+        """Apply the discount to the course price"""
+        with transaction.atomic():
+            self.course.price = self.discounted_price
+            self.course.save(update_fields=['price'])
+            self.status = 'active'
+            self.save(update_fields=['status'])
+    
+    def remove_discount(self):
+        """Remove the discount and restore original price"""
+        with transaction.atomic():
+            self.course.price = self.original_price
+            self.course.save(update_fields=['price'])
+            self.status = 'expired'
+            self.save(update_fields=['status'])
+    
+    def cancel_discount(self):
+        """Cancel the discount before it expires"""
+        with transaction.atomic():
+            if self.status == 'active':
+                self.course.price = self.original_price
+                self.course.save(update_fields=['price'])
+            
+            self.status = 'cancelled'
+            self.save(update_fields=['status'])
+            
+            # Cancel scheduled jobs
+            from .tasks import cancel_scheduled_job
+            if self.activation_job_id:
+                cancel_scheduled_job(self.activation_job_id)
+            if self.expiration_job_id:
+                cancel_scheduled_job(self.expiration_job_id)
+    
+    @property
+    def is_active(self):
+        """Check if discount is currently active"""
+        now = timezone.now()
+        return (
+            self.status == 'active' and 
+            self.start_date <= now <= self.end_date
+        )
+    
+    @property
+    def discount_percentage(self):
+        """Get discount as percentage regardless of type"""
+        if self.original_price == 0:
+            return 0
+        return ((self.original_price - self.discounted_price) / self.original_price) * 100
+    
+    def __str__(self):
+        return f"Discount for {self.course.title} ({self.discount_percentage:.1f}% off)"
