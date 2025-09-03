@@ -11,12 +11,19 @@ from .models import (
 
 @admin.register(User)
 class CustomUserAdmin(UserAdmin):
-    list_display = ('get_full_name', 'phone', 'user_type', 'is_active', 'last_login')
-    list_filter = ('user_type', 'is_active')
+    list_display = (
+        'get_full_name',
+        'phone',
+        'user_type',
+        'is_verified',   # NEW
+        'is_active',
+        'last_login'
+    )
+    list_filter = ('user_type', 'is_active', 'is_verified')  # NEW
     search_fields = ('phone', 'first_name', 'middle_name', 'last_name')
     ordering = ('-date_joined',)
-    readonly_fields = ('date_joined',)  # Add this line
-    
+    readonly_fields = ('date_joined',)
+
     fieldsets = (
         (None, {'fields': ('phone', 'password')}),
         ('Personal Info', {
@@ -24,6 +31,7 @@ class CustomUserAdmin(UserAdmin):
                 'first_name',
                 'middle_name',
                 'last_name',
+                'telegram_chat_id',  # NEW
             )
         }),
         ('Permissions', {
@@ -31,6 +39,7 @@ class CustomUserAdmin(UserAdmin):
                 'is_active',
                 'is_staff',
                 'is_superuser',
+                'is_verified',  # NEW
                 'user_type',
                 'groups',
                 'user_permissions',
@@ -38,7 +47,7 @@ class CustomUserAdmin(UserAdmin):
         }),
         ('Important dates', {'fields': ('last_login', 'date_joined')}),
     )
-    
+
     add_fieldsets = (
         (None, {
             'classes': ('wide',),
@@ -50,14 +59,16 @@ class CustomUserAdmin(UserAdmin):
                 'password1',
                 'password2',
                 'user_type',
+                'is_verified',  # NEW
+                'telegram_chat_id',  # NEW
             ),
         }),
     )
-    
+
     def get_full_name(self, obj):
         return obj.get_full_name()
     get_full_name.short_description = 'Full Name'
-    
+       
 @admin.register(SecurityQuestion)
 class SecurityQuestionAdmin(admin.ModelAdmin):
     list_display = ('question_text', 'language')
