@@ -571,11 +571,22 @@ class HallViewSet(viewsets.ModelViewSet):
         data = ser.validated_data
 
         day      = data["date"]
-        start_dt = datetime.combine(day, data["start_time"])
-        end_dt   = datetime.combine(day, data["end_time"])
+        start_time = data["start_time"]
+        end_time = data["end_time"]
+        start_dt = datetime.combine(day,start_time)
+        end_dt   = datetime.combine(day, end_time)
         btype    = data["booking_type"]
         svc      = data.get("service_ids", [])
         head     = data["headcount"]
+    
+    
+        if end_dt <= start_dt:
+            return Response(
+                {"error": "End time must be after start time."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        duration = Decimal((end_dt - start_dt).total_seconds()) / Decimal(3600)
 
         # Base queryset
         qs = Hall.objects.all()

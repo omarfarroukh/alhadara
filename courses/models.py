@@ -1,12 +1,13 @@
-from django.db import models
+from django.db import models, transaction
 from core.models import Interest, StudyField
 from django.db.models import Q
 from django.core.validators import MinValueValidator
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 from datetime import date, datetime, timedelta
 from django.core.exceptions import ValidationError
 from django.utils import timezone
 from django.core.validators import FileExtensionValidator
+
 
 
 import time
@@ -627,18 +628,37 @@ class Booking(models.Model):
     # ---------------- pricing helpers ----------------
     @property
     def calculated_price(self):
-        start_dt = datetime.combine(self.date, self.start_time)
-        end_dt   = datetime.combine(self.date, self.end_time)
-        hours    = Decimal((end_dt - start_dt).total_seconds()) / Decimal(3600)
+        """Calculate price with proper decimal handling"""
+        try:
+            start_dt = datetime.combine(self.date, self.start_time)
+            end_dt   = datetime.combine(self.date, self.end_time)
+            hours    = Decimal((end_dt - start_dt).total_seconds()) / Decimal(3600)
+            hours = hours.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
 
-        total_hourly_rate = self.hall.hourly_rate + sum(
-            s.price for s in self.hall.services.all())
-        base = total_hourly_rate * hours * self.headcount
+            # Calculate service prices safely
+            service_price = Decimal('0.00')
+            for service in self.hall.services.all():
+                if service.price is not None:
+                    service_price += Decimal(str(service.price))
 
-        if self.booking_type == 'private':
-            surcharge = self.private_surcharge 
-            return base + surcharge
-        return base
+            total_hourly_rate = Decimal(str(self.hall.hourly_rate)) + service_price
+            base = total_hourly_rate * hours * Decimal(str(self.headcount))
+
+            if self.booking_type == 'private':
+                surcharge = self.private_surcharge or Decimal('0.00')
+                total = base + Decimal(str(surcharge))
+            else:
+                total = base
+                
+            # Ensure proper quantization
+            return total.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+            
+        except Exception as e:
+            # Log the error for debugging
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"Error calculating price for booking {getattr(self, 'id', 'new')}: {e}")
+            raise ValidationError(f"Error calculating booking price: {str(e)}")
 
     # ---------------- business rules ----------------
     @property
@@ -654,49 +674,71 @@ class Booking(models.Model):
 
     def process_payment(self):
         from core.models import EWallet, Transaction
-        """Move money and create Transaction."""
+        import time
+        """Move money and create Transaction with proper validation."""
+        
         price = self.calculated_price
         if price <= 0:
             raise ValidationError("Price must be positive")
+            
+        # Ensure price is properly quantized and within limits
+        try:
+            quantized_price = price.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+            
+            # Check Transaction model limits
+            max_transaction_amount = Decimal('99999999.99')
+            if quantized_price > max_transaction_amount:
+                raise ValidationError(
+                    f"Booking amount (${quantized_price}) exceeds maximum transaction limit (${max_transaction_amount}). "
+                    f"Please reduce the booking duration or headcount."
+                )
+        except Exception as e:
+            raise ValidationError(f"Error processing amount: {str(e)}")
 
         admin = User.objects.get(user_type='admin')
         admin_wallet = EWallet.objects.get(user=admin)
 
-        if self.is_guest:
-            # reception already collected cash; just record it
-            admin_wallet.deposit(price)   # <-- ADD THIS LINE
-            guest_user, _ = User.objects.get_or_create(
-                phone='guest',
-                defaults={'first_name': 'Guest',
-                          'last_name':  'User',
-                          'user_type':  'student',
-                          'is_active':  False})
-            Transaction.objects.create(
-                sender=guest_user,
-                receiver=admin,
-                amount=price,
-                transaction_type='booking_payment',
-                status='completed',
-                description=f"Cash booking #{self.id} ({self.guest_name})",
-                reference_id=f"BK-CASH-{self.id}-{int(time.time())}")
-        else:
-            # student e-wallet → admin e-wallet
-            student_wallet = EWallet.objects.get(user=self.student)
-            if student_wallet.current_balance < price:
-                raise ValidationError("Insufficient wallet balance")
-            student_wallet.withdraw(price)
-            admin_wallet.deposit(price)
-            Transaction.objects.create(
-                sender=self.student,
-                receiver=admin,
-                amount=price,
-                transaction_type='booking_payment',
-                status='completed',
-                description=f"Booking #{self.id}",
-                reference_id=f"BK-EW-{self.id}-{int(time.time())}")
+        # Use database transaction to ensure atomicity
+        with transaction.atomic():
+            if self.is_guest:
+                # reception already collected cash; just record it
+                admin_wallet.deposit(quantized_price)
+                guest_user, _ = User.objects.get_or_create(
+                    phone='guest',
+                    defaults={'first_name': 'Guest',
+                            'last_name':  'User',
+                            'user_type':  'student',
+                            'is_active':  False})
+                
+                # Create transaction with validated amount
+                Transaction.objects.create(
+                    sender=guest_user,
+                    receiver=admin,
+                    amount=quantized_price,
+                    transaction_type='booking_payment',
+                    status='completed',
+                    description=f"Cash booking #{self.id} ({self.guest_name})",
+                    reference_id=f"BK-CASH-{self.id}-{int(time.time())}")
+            else:
+                # student e-wallet → admin e-wallet
+                student_wallet = EWallet.objects.get(user=self.student)
+                if student_wallet.current_balance < quantized_price:
+                    raise ValidationError("Insufficient wallet balance")
+                
+                student_wallet.withdraw(quantized_price)
+                admin_wallet.deposit(quantized_price)
+                Transaction.objects.create(
+                    sender=self.student,
+                    receiver=admin,
+                    amount=quantized_price,
+                    transaction_type='booking_payment',
+                    status='completed',
+                    description=f"Booking #{self.id}",
+                    reference_id=f"BK-EW-{self.id}-{int(time.time())}")
 
-        self.amount_paid = price
-        self.save(update_fields=['amount_paid'])
+            # Only update amount_paid if everything succeeded
+            self.amount_paid = quantized_price
+            self.save(update_fields=['amount_paid'])
 
     def refund(self):
         from core.models import EWallet, Transaction

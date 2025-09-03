@@ -9,6 +9,8 @@ from django.contrib.auth import get_user_model
 from core.translation import translate_text
 import logging
 from django.db.models import Q
+from django.db import transaction
+
 logger = logging.getLogger(__name__)
 
 
@@ -609,15 +611,30 @@ class HallSearchResultSerializer(serializers.Serializer):
     hall = serializers.SerializerMethodField()
     included_services = HallServiceSerializer(many=True)
     matches_requested_services = HallServiceSerializer(many=True)
-    base_price = serializers.DecimalField(max_digits=10, decimal_places=2)
-    services_price = serializers.DecimalField(max_digits=10, decimal_places=2)
-    private_surcharge = serializers.DecimalField(max_digits=10, decimal_places=2)
-    total_price = serializers.DecimalField(max_digits=10, decimal_places=2)
-    remaining_seats = serializers.IntegerField()
+    base_price = serializers.DecimalField(
+        max_digits=10, 
+        decimal_places=2,
+        min_value=Decimal('0.00')  # Use Decimal instead of float
+    )
+    services_price = serializers.DecimalField(
+        max_digits=10, 
+        decimal_places=2,
+        min_value=Decimal('0.00')
+    )
+    private_surcharge = serializers.DecimalField(
+        max_digits=10, 
+        decimal_places=2,
+        min_value=Decimal('0.00')
+    )
+    total_price = serializers.DecimalField(
+        max_digits=10, 
+        decimal_places=2,
+        min_value=Decimal('0.00')
+    )
+    remaining_seats = serializers.IntegerField(min_value=0)
 
-    
     def get_hall(self, obj):
-        from .serializers import HallSerializer  # Avoid circular import
+        from .serializers import HallSerializer
         return HallSerializer(obj['hall']).data
     
     
@@ -631,16 +648,81 @@ class StudentBookingSerializer(serializers.ModelSerializer):
                   'booking_type', 'headcount', 'calculated_price')
         read_only_fields = ('calculated_price',)
 
-    def create(self, validated):
-        validated['student'] = self.context['request'].user
-        validated['payment_method'] = 'ewallet'
-        if validated['booking_type'] == 'private':
-            validated['private_surcharge'] = 100
-        booking = super().create(validated)
-        booking.status = 'approved'
-        booking.save()
-        booking.process_payment()
-        return booking
+    def validate(self, data):
+        """Validate booking data and check price limits"""
+        # Create temporary booking to calculate price
+        temp_booking = Booking(**data)
+        temp_booking.student = self.context['request'].user
+        temp_booking.payment_method = 'ewallet'
+        
+        if data['booking_type'] == 'private':
+            temp_booking.private_surcharge = Decimal('100.00')
+        else:
+            temp_booking.private_surcharge = Decimal('0.00')
+        
+        # Calculate and validate price
+        try:
+            calculated_price = temp_booking.calculated_price
+            
+            # Transaction model limit: max_digits=10, decimal_places=2
+            # Max value is 99999999.99 (8 digits before decimal + 2 after)
+            max_amount = Decimal('99999999.99')
+            
+            if calculated_price > max_amount:
+                raise serializers.ValidationError({
+                    'non_field_errors': [
+                        f"Booking cost (${calculated_price}) exceeds maximum allowed amount (${max_amount}). "
+                        f"Please reduce the booking duration or number of attendees."
+                    ]
+                })
+            
+            # Check wallet balance for students
+            try:
+                from core.models import EWallet
+                wallet = EWallet.objects.get(user=self.context['request'].user)
+                if wallet.current_balance < calculated_price:
+                    raise serializers.ValidationError({
+                        'non_field_errors': [
+                            f"Insufficient wallet balance. Required: ${calculated_price}, "
+                            f"Available: ${wallet.current_balance}"
+                        ]
+                    })
+            except EWallet.DoesNotExist:
+                raise serializers.ValidationError({
+                    'non_field_errors': ['Student wallet not found']
+                })
+                
+        except Exception as e:
+            raise serializers.ValidationError({
+                'non_field_errors': [f"Error calculating booking price: {str(e)}"]
+            })
+        
+        return data
+
+    def create(self, validated_data):
+        validated_data['student'] = self.context['request'].user
+        validated_data['payment_method'] = 'ewallet'
+        
+        if validated_data['booking_type'] == 'private':
+            validated_data['private_surcharge'] = Decimal('100.00')
+        else:
+            validated_data['private_surcharge'] = Decimal('0.00')
+        
+        try:
+            # Use database transaction to ensure atomicity
+            with transaction.atomic():
+                booking = super().create(validated_data)
+                booking.status = 'approved'
+                booking.save()
+                booking.process_payment()
+                return booking
+        except ValidationError as e:
+            raise serializers.ValidationError({'non_field_errors': [str(e)]})
+        except Exception as e:
+            raise serializers.ValidationError({
+                'non_field_errors': [f"Error processing booking: {str(e)}"]
+            })
+
 
 
 class GuestBookingSerializer(serializers.ModelSerializer):
