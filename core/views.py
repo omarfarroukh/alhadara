@@ -22,12 +22,12 @@ from django_ratelimit.decorators import ratelimit
 from django_filters.rest_framework import DjangoFilterBackend
 from .models import (ProfileImage, SecurityQuestion, SecurityAnswer, Interest, 
     Profile, ProfileInterest, EWallet, DepositMethod,
-    BankTransferInfo, MoneyTransferInfo, DepositRequest, StudyField, University, Transaction, Notification
+    BankTransferInfo, MoneyTransferInfo, DepositRequest, StudyField, University, Transaction, Notification, WithdrawalRequest
 )
 from .serializers import (
     NewPasswordSerializer, PasswordResetRequestSerializer, ProfileImageSerializer, SecurityAnswerValidationSerializer, SecurityQuestionSerializer, SecurityAnswerSerializer, InterestSerializer, 
     ProfileSerializer, EWalletSerializer, DepositMethodSerializer, DepositRequestSerializer, AddInterestSerializer,RemoveInterestSerializer, StudyFieldSerializer, TeacherSerializer, UniversitySerializer, TransactionSerializer, NotificationSerializer,
-    PasswordResetOTPRequestSerializer, PasswordResetOTPValidateSerializer
+    PasswordResetOTPRequestSerializer, PasswordResetOTPValidateSerializer, WithdrawalRequestSerializer
 )
 from django.conf import settings
 from rest_framework.permissions import AllowAny
@@ -1064,3 +1064,84 @@ class JobStatusView(APIView):
         if job.is_failed:
             return Response({"status": "failed", "error": str(job.exc_info)})
         return Response({"status": "queued"})
+
+
+class WithdrawalRequestViewSet(viewsets.ModelViewSet):
+    serializer_class = WithdrawalRequestSerializer
+    permission_classes = [permissions.IsAuthenticated]
+    filter_backends = [
+        DjangoFilterBackend,
+        filters.SearchFilter,
+        filters.OrderingFilter,
+    ]
+    filterset_fields = {
+        'status': ['exact'],
+        'requested_at': ['gte', 'lte'],
+        'pickup_datetime': ['gte', 'lte'],
+        'amount': ['gte', 'lte'],
+    }
+    search_fields = [
+        'user__username',
+        'user__first_name',
+        'user__last_name',
+    ]
+    ordering_fields = ['requested_at', 'amount', 'pickup_datetime']
+    ordering = ['-requested_at']
+
+    def get_queryset(self):
+        user = self.request.user
+        if user.user_type in ('reception', 'admin'):
+            return WithdrawalRequest.objects.select_related('user')
+        return WithdrawalRequest.objects.filter(user=user)
+
+    # ---------------------------------
+    # Reception-only custom endpoints
+    # ---------------------------------
+    @extend_schema(
+        request=OpenApiTypes.OBJECT,
+        parameters=[
+            OpenApiParameter(
+                name='pickup_datetime',
+                type=OpenApiTypes.DATETIME,
+                description='ISO-8601 date-time when student will pick up cash',
+                required=True,
+            )
+        ],
+        responses={200: {'type': 'object', 'properties': {'status': {'type': 'string'}}}}
+    )
+    @action(detail=True, methods=['post'],
+            permission_classes=[IsAdminOrReception])
+    def schedule(self, request, pk=None):
+        wr = self.get_object()
+        pickup = request.data.get('pickup_datetime')
+        if not pickup:
+            return Response({'pickup_datetime': 'This field is required.'},
+                            status=status.HTTP_400_BAD_REQUEST)
+        wr.pickup_datetime = pickup
+        wr.status = 'scheduled'
+        wr.save(update_fields=['pickup_datetime', 'status'])
+        return Response({'status': 'scheduled'})
+
+    @extend_schema(
+        request=None,
+        responses={
+            200: {
+                'type': 'object',
+                'properties': {
+                    'status': {'type': 'string'},
+                    'new_balance': {'type': 'string'}
+                }
+            }
+        }
+    )
+    @action(detail=True, methods=['post'],
+            permission_classes=[IsAdminOrReception])
+    def complete(self, request, pk=None):
+        wr = self.get_object()
+        try:
+            wr.mark_done(request.user)
+        except ValidationError as e:
+            return Response({'error': str(e)},
+                            status=status.HTTP_400_BAD_REQUEST)
+        return Response({'status': 'done',
+                         'new_balance': str(wr.user.wallet.current_balance)})

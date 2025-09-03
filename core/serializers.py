@@ -5,7 +5,7 @@ from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from djoser.serializers import UserCreateSerializer as BaseUserCreateSerializer, UserSerializer
 from .models import ( ProfileImage, SecurityQuestion, SecurityAnswer, Interest, 
     Profile, ProfileInterest, EWallet, DepositMethod,
-    BankTransferInfo, MoneyTransferInfo, DepositRequest, StudyField, University, Transaction, Notification, FileStorage
+    BankTransferInfo, MoneyTransferInfo, DepositRequest, StudyField, University, Transaction, Notification, FileStorage, WithdrawalRequest
 )
 from django.core.exceptions import ValidationError as DjangoValidationError
 from rest_framework.exceptions import ValidationError as DRFValidationError
@@ -547,3 +547,20 @@ class FileStorageSerializer(serializers.ModelSerializer):
         model = FileStorage
         fields = ['id', 'telegram_file_id', 'telegram_download_link', 'file', 'uploaded_at']
         read_only_fields = fields
+
+class WithdrawalRequestSerializer(serializers.ModelSerializer):
+    class Meta:
+        model  = WithdrawalRequest
+        fields = ['id', 'amount', 'requested_at', 'pickup_datetime',
+                  'status', 'handled_at']
+        read_only_fields = ['id', 'requested_at', 'status', 'handled_at']
+
+    def validate_amount(self, value):
+        user = self.context['request'].user
+        if user.wallet.current_balance < value:
+            raise serializers.ValidationError("Insufficient balance.")
+        return value
+
+    def create(self, validated_data):
+        validated_data['user'] = self.context['request'].user
+        return super().create(validated_data)

@@ -1,7 +1,7 @@
 from datetime import timedelta
 from decimal import Decimal
 from django.conf import settings
-from django.db import models
+from django.db import models, transaction
 from django.contrib.auth.models import AbstractBaseUser, BaseUserManager, PermissionsMixin
 from django.core.validators import MinValueValidator, MaxValueValidator
 from django.utils import timezone
@@ -613,3 +613,59 @@ class Captcha(models.Model):
 
     def is_expired(self):
         return timezone.now() > self.created_at + timedelta(minutes=5)
+
+class WithdrawalRequest(models.Model):
+    STATUS_CHOICES = (
+        ('pending',  'Pending'),
+        ('scheduled','Scheduled'),
+        ('done',     'Done'),
+        ('cancelled','Cancelled'),
+    )
+
+    user            = models.ForeignKey(User, on_delete=models.CASCADE,
+                                        related_name='withdrawal_requests')
+    amount          = models.DecimalField(max_digits=10, decimal_places=2)
+    requested_at    = models.DateTimeField(auto_now_add=True)
+    pickup_datetime = models.DateTimeField(null=True, blank=True,
+                                           verbose_name='Pick-up date/time')
+    status          = models.CharField(max_length=12,
+                                       choices=STATUS_CHOICES,
+                                       default='pending')
+    handled_by      = models.ForeignKey(User, on_delete=models.SET_NULL,
+                                        null=True, blank=True,
+                                        related_name='handled_withdrawals')
+    handled_at      = models.DateTimeField(null=True, blank=True)
+
+    def __str__(self):
+        return f"{self.user.get_full_name()} – {self.amount} ({self.status})"
+
+    def clean(self):
+        super().clean()
+        if self.amount <= 0:
+            raise ValidationError("Amount must be positive.")
+
+    def mark_done(self, reception_user):
+        """
+        Called by reception when the student physically collects the cash.
+        Creates the Transaction and debits the wallet atomically.
+        """
+        if self.status != 'scheduled':
+            raise ValidationError("Only scheduled withdrawals can be marked as done.")
+
+        with transaction.atomic():
+            wallet = self.user.wallet
+            wallet.withdraw(self.amount)        # raises ValidationError if insufficient
+            self.status      = 'done'
+            self.handled_by  = reception_user
+            self.handled_at  = timezone.now()
+            self.save(update_fields=['status', 'handled_by', 'handled_at'])
+
+            Transaction.objects.create(
+                sender       = self.user,
+                receiver     = None,            # external (cash) payout
+                amount       = self.amount,
+                transaction_type = 'withdrawal',
+                status       = 'completed',
+                description  = f"Cash withdrawal #{self.id}",
+                reference_id = f"WDR-{self.id}"
+            )

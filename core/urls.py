@@ -4,7 +4,7 @@ from rest_framework_simplejwt.views import TokenRefreshView, TokenVerifyView
 from .views import (
     JobStatusView, PasswordResetViewSet, ProfileImageViewSet, SecurityQuestionViewSet, SecurityAnswerViewSet, InterestViewSet, TeacherViewSet,UserProfileView,
     ProfileViewSet, EWalletViewSet, DepositMethodViewSet, DepositRequestViewSet, CustomTokenObtainPairView, StudyFieldViewSet, UniversityViewSet,
-    TransactionViewSet, NotificationViewSet, get_captcha, start_verification, verify_captcha, verify_pin
+    TransactionViewSet, NotificationViewSet, WithdrawalRequestViewSet, get_captcha, start_verification, verify_captcha, verify_pin
 )
 
 router = DefaultRouter()
@@ -16,6 +16,7 @@ router.register(r'profile-images', ProfileImageViewSet, basename='profileimage')
 router.register(r'wallets', EWalletViewSet, basename='wallet')
 router.register(r'deposit-methods', DepositMethodViewSet)
 router.register(r'deposit-requests', DepositRequestViewSet, basename='deposit-request')
+router.register(r'withdrawals', WithdrawalRequestViewSet, basename='withdrawal')
 router.register(r'reset-password', PasswordResetViewSet, basename='password-reset')
 router.register(r'universities', UniversityViewSet)
 router.register(r'studyfields', StudyFieldViewSet)
