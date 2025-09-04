@@ -667,7 +667,32 @@ class HallSearchResultSerializer(serializers.Serializer):
         from .serializers import HallSerializer
         return HallSerializer(obj['hall']).data
     
-    
+# serializers.py
+class BookingListSerializer(serializers.ModelSerializer):
+    hall_name  = serializers.CharField(source='hall.name', read_only=True)
+    booked_for = serializers.SerializerMethodField(read_only=True)
+
+    class Meta:
+        model  = Booking
+        fields = (
+            'id', 'hall', 'hall_name', 'date', 'start_time', 'end_time',
+            'booking_type', 'headcount', 'calculated_price', 'status',
+            'booked_for'
+        )
+
+    def get_booked_for(self, obj: Booking):
+        # student booking (public OR private)
+        if obj.student:
+            return {
+                'name':  obj.student.get_full_name(),
+                'phone': obj.student.phone
+            }
+        # reception guest booking
+        return {
+            'name':  obj.guest_name or '',
+            'phone': obj.guest_phone or ''
+        }
+          
 class StudentBookingSerializer(serializers.ModelSerializer):
     hall_name = serializers.CharField(source='hall.name', read_only=True)
     calculated_price = serializers.ReadOnlyField()
@@ -675,8 +700,8 @@ class StudentBookingSerializer(serializers.ModelSerializer):
     class Meta:
         model = Booking
         fields = ('id', 'hall', 'hall_name', 'date', 'start_time', 'end_time',
-                  'booking_type', 'headcount', 'calculated_price')
-        read_only_fields = ('calculated_price',)
+                  'booking_type', 'headcount', 'calculated_price', 'status')
+        read_only_fields = ('calculated_price','status')
 
     def validate(self, data):
         """Validate booking data and check price limits"""
@@ -763,8 +788,8 @@ class GuestBookingSerializer(serializers.ModelSerializer):
         model = Booking
         fields = ('id', 'hall', 'hall_name', 'date', 'start_time', 'end_time',
                   'booking_type', 'headcount', 'guest_name', 'guest_phone',
-                  'calculated_price')
-        read_only_fields = ('calculated_price',)
+                  'calculated_price', 'status')
+        read_only_fields = ('calculated_price', 'status')
 
     def create(self, validated):
         validated['payment_method'] = 'cash'

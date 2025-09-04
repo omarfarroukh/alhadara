@@ -11,7 +11,7 @@ from .cache_keys import courses_list_key, COURSES_LIST_TIMEOUT
 from django.core.exceptions import ValidationError
 from .models import CourseDiscount, CourseImage, CourseTypeIcon, Department, CourseType, Course, DepartmentIcon, Hall, HallService, ScheduleSlot, Booking,Wishlist, Enrollment
 from .serializers import (
-    BaseEnrollmentSerializer, CourseCreateUpdateSerializer, CourseDiscountCreateSerializer, CourseDiscountSerializer, CourseImageSerializer, CourseTypeIconSerializer, DepartmentIconSerializer, DepartmentSerializer, CourseTypeSerializer, CourseSerializer, GuestBookingSerializer, GuestEnrollmentSerializer, HallSearchQuerySerializer, HallSearchResultSerializer,
+    BaseEnrollmentSerializer, BookingListSerializer, CourseCreateUpdateSerializer, CourseDiscountCreateSerializer, CourseDiscountSerializer, CourseImageSerializer, CourseTypeIconSerializer, DepartmentIconSerializer, DepartmentSerializer, CourseTypeSerializer, CourseSerializer, GuestBookingSerializer, GuestEnrollmentSerializer, HallSearchQuerySerializer, HallSearchResultSerializer,
     HallSerializer, HallServiceSerializer, ScheduleSlotSerializer, StudentBookingSerializer, TeacherScheduleSlotSerializer, StudentEnrollmentSerializer,WishlistSerializer,
     HallAvailabilityResponseSerializer
 )
@@ -941,7 +941,10 @@ class BookingViewSet(viewsets.ModelViewSet):
     def get_serializer_class(self):
         if self.action == 'create_guest':
             return GuestBookingSerializer
-        return StudentBookingSerializer
+        if self.action in ('create', 'update', 'partial_update'):
+            return StudentBookingSerializer
+        # list, retrieve, etc. → single, clean serializer
+        return BookingListSerializer
 
     def get_permissions(self):
         if self.action == 'create_guest':
