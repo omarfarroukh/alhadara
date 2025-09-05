@@ -11,6 +11,7 @@ import logging
 from django.db.models import Q
 from django.db import transaction
 from django.utils import timezone
+from core.utils import TranslationMixin
 
 logger = logging.getLogger(__name__)
 
@@ -28,13 +29,31 @@ class DepartmentIconSerializer(serializers.ModelSerializer):
         request = self.context.get('request')
         return request.build_absolute_uri(obj.image.url) if obj.image and request else None
     
-class DepartmentSerializer(serializers.ModelSerializer):
+class DepartmentSerializer(TranslationMixin, serializers.ModelSerializer):
+    # This is your READ serializer with translations (as defined in the previous answer)
     icon = DepartmentIconSerializer(read_only=True)
+    name = serializers.SerializerMethodField()
+    description = serializers.SerializerMethodField()
 
     class Meta:
         model = Department
         fields = ('id', 'name', 'description', 'icon')
         
+    def get_name(self, obj):
+        return self.get_translated_field(obj.name)
+
+    def get_description(self, obj):
+        return self.get_translated_field(obj.description)
+
+class DepartmentCreateUpdateSerializer(serializers.ModelSerializer):
+    """
+    Write-only serializer for creating/updating Departments.
+    """
+    class Meta:
+        model = Department
+        fields = ('name', 'description')
+
+
 class CourseTypeIconSerializer(serializers.ModelSerializer):
     image_url = serializers.SerializerMethodField()
 
@@ -46,8 +65,11 @@ class CourseTypeIconSerializer(serializers.ModelSerializer):
         request = self.context.get('request')
         return request.build_absolute_uri(obj.image.url) if obj.image and request else None
     
-class CourseTypeSerializer(serializers.ModelSerializer):
-    department_name = serializers.ReadOnlyField(source='department.name')
+class CourseTypeSerializer(TranslationMixin, serializers.ModelSerializer):
+    # --- TRANSLATION START ---
+    name = serializers.SerializerMethodField()
+    department_name = serializers.SerializerMethodField()
+    # --- TRANSLATION END ---
     tags = serializers.SerializerMethodField()
     icon = CourseTypeIconSerializer(read_only=True)
 
@@ -55,8 +77,24 @@ class CourseTypeSerializer(serializers.ModelSerializer):
         model = CourseType
         fields = ('id', 'name', 'department', 'department_name', 'tags', 'icon')
     
+    def get_name(self, obj):
+        return self.get_translated_field(obj.name)
+
+    def get_department_name(self, obj):
+        if obj.department:
+            return self.get_translated_field(obj.department.name)
+        return None
+
     def get_tags(self, obj):
         return obj.get_tags()
+
+class CourseTypeCreateUpdateSerializer(serializers.ModelSerializer):
+    """
+    Write-only serializer for creating/updating CourseTypes.
+    """
+    class Meta:
+        model = CourseType
+        fields = ('name', 'department')
 
 class HallSerializer(serializers.ModelSerializer):
     hourly_rate = serializers.DecimalField(
@@ -107,7 +145,7 @@ class CourseImageSerializer(serializers.ModelSerializer):
 
 
  
-class CourseSerializer(serializers.ModelSerializer):
+class CourseSerializer(TranslationMixin ,serializers.ModelSerializer):
     title            = serializers.SerializerMethodField()
     description      = serializers.SerializerMethodField()
     category         = serializers.SerializerMethodField()
@@ -140,24 +178,20 @@ class CourseSerializer(serializers.ModelSerializer):
         )
 
     
-    def _get_lang(self):
-        return self.context["request"].GET.get("lang") or "en"
-
-    # ---------- translated fields ----------
     def get_title(self, obj):
-        return translate_text(obj.title, self._get_lang())
+        return self.get_translated_field(obj.title)
 
     def get_description(self, obj):
-        return translate_text(obj.description, self._get_lang())
+        return self.get_translated_field(obj.description)
 
     def get_category(self, obj):
-        return translate_text(obj.category, self._get_lang())
+        return self.get_translated_field(obj.category)
     
     def get_department_name(self, obj):
-        return translate_text(obj.department.name, self._get_lang())
+        return self.get_translated_field(obj.department.name)
 
     def get_course_type_name(self, obj):
-        return translate_text(obj.course_type.name, self._get_lang())
+        return self.get_translated_field(obj.course_type.name)
     
     
     def get_is_in_wishlist(self, obj):
@@ -192,26 +226,41 @@ class CourseSerializer(serializers.ModelSerializer):
             return dict(obj.required_language_level.LEVEL_CHOICES)[obj.required_language_level.level]
         return None
     
+
     def get_has_discount(self, obj):
-        """Check if course has an active discount"""
-        return hasattr(obj, 'discount') and obj.discount.is_active
-    
+        """True if *any* related discount is active right now."""
+        return obj.discounts.filter(
+            status='active',
+            start_date__lte=timezone.now(),
+            end_date__gte=timezone.now()
+        ).exists()
+
     def get_discount_info(self, obj):
-        """Get discount information if available"""
-        if hasattr(obj, 'discount') and obj.discount.is_active:
-            return {
-                'discount_percentage': round(obj.discount.discount_percentage, 1),
-                'original_price': str(obj.discount.original_price),
-                'savings': str(obj.discount.original_price - obj.discount.discounted_price),
-                'end_date': obj.discount.end_date.isoformat()
-            }
-        return None
-    
+        """Return the *currently* active discount (or None)."""
+        active = obj.discounts.filter(
+            status='active',
+            start_date__lte=timezone.now(),
+            end_date__gte=timezone.now()
+        ).select_related('course').first()   # newest if several
+
+        if not active:
+            return None
+
+        return {
+            'discount_percentage': round(active.discount_percentage, 1),
+            'original_price': str(active.original_price),
+            'savings': str(active.original_price - active.discounted_price),
+            'end_date': active.end_date.isoformat(),
+        }
+
     def get_original_price(self, obj):
-        """Get original price (useful when discount is active)"""
-        if hasattr(obj, 'discount'):
-            return str(obj.discount.original_price)
-        return str(obj.price)
+        """If an active discount exists show its original price, else current price."""
+        active = obj.discounts.filter(
+            status='active',
+            start_date__lte=timezone.now(),
+            end_date__gte=timezone.now()
+        ).first()
+        return str(active.original_price) if active else str(obj.price)
     
     def validate(self, data):
         """
@@ -256,9 +305,9 @@ class CourseCreateUpdateSerializer(serializers.ModelSerializer):
             'required_language_level',
         ]
         
-class ScheduleSlotSerializer(serializers.ModelSerializer):
-    course_title = serializers.ReadOnlyField(source='course.title')
-    hall_name = serializers.ReadOnlyField(source='hall.name')
+class ScheduleSlotSerializer(TranslationMixin ,serializers.ModelSerializer):
+    course_title = serializers.SerializerMethodField()
+    hall_name = serializers.SerializerMethodField()
     teacher_name = serializers.SerializerMethodField()
     duration_hours = serializers.SerializerMethodField()
     remaining_seats = serializers.SerializerMethodField()
@@ -279,6 +328,18 @@ class ScheduleSlotSerializer(serializers.ModelSerializer):
             'valid_until': {'required': False},
             'teacher': {'required': False}
         }
+    
+
+    def get_course_title(self, obj):
+        if obj.course:
+            return self.get_translated_field(obj.course.title)
+        return None
+
+    def get_hall_name(self, obj):
+        if obj.hall:
+            return self.get_translated_field(obj.hall.name)
+        return None
+    
     
     def get_teacher_name(self, obj):
         """Get teacher's full name instead of username"""
@@ -422,9 +483,9 @@ class WishlistCourseSerializer(serializers.ModelSerializer):
             'course_type_name', 'department_name', 'category'
         )
 
-class BaseEnrollmentSerializer(serializers.ModelSerializer):
+class BaseEnrollmentSerializer(TranslationMixin, serializers.ModelSerializer):
     student_name = serializers.SerializerMethodField()
-    course_title = serializers.ReadOnlyField(source='course.title')
+    course_title = serializers.SerializerMethodField()
     schedule_slot_display = serializers.SerializerMethodField()
     remaining_balance = serializers.SerializerMethodField()
     payment_method_display = serializers.CharField(source='get_payment_method_display', read_only=True)
@@ -445,6 +506,11 @@ class BaseEnrollmentSerializer(serializers.ModelSerializer):
             'enrolled_by', 'student'
         )
 
+    def get_course_title(self, obj):
+        if obj.course:
+            return self.get_translated_field(obj.course.title)
+        return None
+
     def get_student_name(self, obj):
         if obj.is_guest:
             return f"{obj.first_name} {obj.last_name}"
@@ -453,8 +519,20 @@ class BaseEnrollmentSerializer(serializers.ModelSerializer):
     def get_schedule_slot_display(self, obj):
         if not obj.schedule_slot:
             return None
+            
+        lang = self._get_lang()
+        from_text = translate_text("From", lang)
+        to_text = translate_text("to", lang)
+        
+        validity_display = None
+        if obj.schedule_slot.valid_from and obj.schedule_slot.valid_until:
+            validity_display = (
+                f"{from_text} {obj.schedule_slot.valid_from.strftime('%Y-%m-%d')} "
+                f"{to_text} {obj.schedule_slot.valid_until.strftime('%Y-%m-%d')}"
+            )
+
         return {
-            'course_title': obj.schedule_slot.course.title if obj.schedule_slot.course else None,
+            'course_title': self.get_course_title(obj), # Reuse translated title
             'days_of_week': obj.schedule_slot.days_of_week,
             'days_display': ", ".join(obj.schedule_slot.days_of_week),
             'time_range': {
@@ -468,10 +546,7 @@ class BaseEnrollmentSerializer(serializers.ModelSerializer):
             'validity_period': {
                 'start': obj.schedule_slot.valid_from.strftime('%Y-%m-%d') if obj.schedule_slot.valid_from else None,
                 'end': obj.schedule_slot.valid_until.strftime('%Y-%m-%d') if obj.schedule_slot.valid_until else None,
-                'display': (
-                    f"From {obj.schedule_slot.valid_from.strftime('%Y-%m-%d')} to "
-                    f"{obj.schedule_slot.valid_until.strftime('%Y-%m-%d')}"
-                ) if obj.schedule_slot.valid_from and obj.schedule_slot.valid_until else None
+                'display': validity_display
             }
         }
 

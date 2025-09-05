@@ -6,11 +6,13 @@ from channels.layers import get_channel_layer
 from asgiref.sync import async_to_sync
 from django.contrib.auth import get_user_model
 from django.utils import timezone
-from courses.models import Enrollment
+from courses.models import Course, CourseDiscount, Enrollment, Wishlist
 import random
 from django.conf import settings
 from telegram import Bot
 from django.core.cache import cache
+
+from entranceexam.models import ExamAttempt
 from .models import Captcha, Notification, DepositRequest
 import logging
 import asyncio
@@ -433,3 +435,102 @@ def notify_ewallet_transfer_task(sender_id, receiver_id, amount):
         )
     except User.DoesNotExist:
         pass
+
+
+
+@job('default')
+def notify_exam_attempt_submitted(attempt_id):
+    """Notifies the grading teacher that a new exam attempt needs grading."""
+    try:
+        attempt = ExamAttempt.objects.select_related('exam', 'student').get(id=attempt_id)
+        teacher_id = attempt.exam.grading_teacher.id
+        send_notification_task.delay(
+            recipient_id=teacher_id,
+            notification_type='exam_attempt_submitted',
+            title='Entrance Exam Ready for Grading',
+            message=f"{attempt.student.get_full_name()} has completed the MCQ section for '{attempt.exam.title}'.",
+            data={'attempt_id': attempt.id, 'student_id': attempt.student.id}
+        )
+    except ExamAttempt.DoesNotExist:
+        pass
+
+@job('default')
+def notify_exam_graded_task(attempt_id):
+    """Notifies the student of their entrance exam result."""
+    try:
+        attempt = ExamAttempt.objects.select_related('student', 'achieved_level', 'exam').get(id=attempt_id)
+        level = attempt.achieved_level.get_level_display() if attempt.achieved_level else "Not determined"
+        send_notification_task.delay(
+            recipient_id=attempt.student.id,
+            notification_type='exam_graded',
+            title=f"Your '{attempt.exam.title}' Exam Results Are In!",
+            message=f"Your exam has been graded. Your achieved level is: {level}.",
+            data={'attempt_id': attempt.id, 'achieved_level': level}
+        )
+    except ExamAttempt.DoesNotExist:
+        pass
+
+@job('default')
+def notify_scheduleslot_news_task(news_id):
+    """Notifies all enrolled students about new news in a schedule slot."""
+    from lessons.models import ScheduleSlotNews
+    try:
+        news_item = ScheduleSlotNews.objects.select_related('schedule_slot__course').get(id=news_id)
+        slot = news_item.schedule_slot
+        enrollments = Enrollment.objects.filter(schedule_slot=slot, status='active', is_guest=False)
+        
+        for enrollment in enrollments:
+            send_notification_task.delay(
+                recipient_id=enrollment.student.id,
+                notification_type='scheduleslot_news',
+                title=f"Update in '{slot.course.title}'",
+                message=f"New post from your teacher: '{news_item.title}'",
+                data={'news_id': news_item.id, 'schedule_slot_id': slot.id}
+            )
+    except ScheduleSlotNews.DoesNotExist:
+        pass
+
+# --- Scheduled Notification Tasks ---
+
+@job('default')
+def notify_wishlist_slots_available():
+    """Daily task to check for new, available schedule slots for courses on users' wishlists."""
+    # Find courses that are on at least one wishlist
+    wishlisted_courses = Course.objects.filter(wishlists__isnull=False).distinct()
+    
+    for course in wishlisted_courses:
+        # Find schedule slots for this course that just became valid (e.g., created today)
+        newly_available_slots = course.schedule_slots.filter(valid_from=timezone.now().date())
+        
+        if newly_available_slots.exists():
+            # Find all users who have this course on their wishlist
+            wishlists = Wishlist.objects.filter(courses=course).select_related('owner')
+            for wishlist in wishlists:
+                send_notification_task.delay(
+                    recipient_id=wishlist.owner.id,
+                    notification_type='wishlist_slot_available',
+                    title=f"'{course.title}' is Now Available!",
+                    message=f"A course from your wishlist, '{course.title}', has a new schedule available. Enroll now!",
+                    data={'course_id': course.id}
+                )
+    return "Wishlist notifications sent."
+
+@job('default')
+def notify_course_discounts():
+    """Daily task to alert users about new discounts on wishlisted courses."""
+    # Find discounts that start today
+    new_discounts = CourseDiscount.objects.filter(start_date__date=timezone.now().date(), status='active')
+    
+    for discount in new_discounts.select_related('course'):
+        course = discount.course
+        # Find all users who have this course on their wishlist
+        wishlists = Wishlist.objects.filter(courses=course).select_related('owner')
+        for wishlist in wishlists:
+            send_notification_task.delay(
+                recipient_id=wishlist.owner.id,
+                notification_type='course_discount_alert',
+                title=f"💸 Sale on '{course.title}'!",
+                message=f"A course from your wishlist is now on sale! Get {discount.discount_value:.0f}% off until {discount.end_date.strftime('%Y-%m-%d')}.",
+                data={'course_id': course.id, 'discount_id': str(discount.id)}
+            )
+    return "Discount notifications sent."

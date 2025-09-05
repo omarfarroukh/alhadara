@@ -16,6 +16,7 @@ RUN apt-get update && apt-get install -y \
 
 # Install pip requirements
 COPY requirements.txt /app/
+RUN pip install openpyxl
 RUN pip install --upgrade pip
 RUN pip install qrcode
 RUN pip install captcha

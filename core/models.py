@@ -529,7 +529,7 @@ class Transaction(models.Model):
     )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
-    
+    loyalty_points_awarded = models.BooleanField(default=False, help_text="True if points for this transaction have been awarded")
     class Meta:
         ordering = ['-created_at']
         
@@ -579,6 +579,15 @@ class Notification(models.Model):
         ('ewallet_transfer_sent', 'eWallet Transfer Sent'),
         ('ewallet_transfer_received', 'eWallet Transfer Received'),
         ('password_changed', 'Password Changed'),
+        ('points_earned', 'Loyalty Points Earned'),
+        ('complaint_submitted', 'Complaint Submitted'),
+        ('complaint_resolved', 'Complaint Resolved'),
+        ('feedback_submitted', 'Feedback Submitted'),
+        ('course_discount_alert', 'Course Discount Alert'),
+        ('wishlist_slot_available', 'Wishlist Course Slot Available'),
+        ('scheduleslot_news', 'New Schedule Slot News'),
+        ('exam_attempt_submitted', 'Entrance Exam Submitted'),
+        ('exam_graded', 'Entrance Exam Graded'),
     )
     
     recipient = models.ForeignKey(User, on_delete=models.CASCADE, related_name='notifications')

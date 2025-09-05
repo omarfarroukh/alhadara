@@ -25,7 +25,7 @@ from .models import (ProfileImage, SecurityQuestion, SecurityAnswer, Interest,
     BankTransferInfo, MoneyTransferInfo, DepositRequest, StudyField, University, Transaction, Notification, WithdrawalRequest
 )
 from .serializers import (
-    NewPasswordSerializer, PasswordResetRequestSerializer, ProfileImageSerializer, SecurityAnswerValidationSerializer, SecurityQuestionSerializer, SecurityAnswerSerializer, InterestSerializer, 
+    InterestCreateSerializer, NewPasswordSerializer, PasswordResetRequestSerializer, ProfileImageSerializer, SecurityAnswerValidationSerializer, SecurityQuestionSerializer, SecurityAnswerSerializer, InterestSerializer, 
     ProfileSerializer, EWalletSerializer, DepositMethodSerializer, DepositRequestSerializer, AddInterestSerializer,RemoveInterestSerializer, StudyFieldSerializer, TeacherSerializer, UniversitySerializer, TransactionSerializer, NotificationSerializer,
     PasswordResetOTPRequestSerializer, PasswordResetOTPValidateSerializer, WithdrawalRequestSerializer
 )
@@ -50,6 +50,14 @@ from django.core.exceptions import ValidationError
 
 logger = logging.getLogger(__name__)
 User = get_user_model()
+LANG_PARAM = OpenApiParameter(
+    name='lang',
+    type=OpenApiTypes.STR,
+    location=OpenApiParameter.QUERY,
+    description='Language code for translating fields (e.g., en, ar).',
+    required=False,
+    enum=['en', 'ar']
+)
 
 @api_view(['GET'])
 @permission_classes([AllowAny])
@@ -297,16 +305,49 @@ class InterestViewSet(viewsets.ModelViewSet):
     
     def get_permissions(self):
         if self.action in ['create', 'update', 'partial_update', 'destroy']:
-            return [IsStudent()]
-        return [permissions.IsAuthenticated()]
+            return [IsAdminOrReception()]
+        return [permissions.AllowAny()]
+    
+    def get_serializer_class(self):
+        """
+        Return the appropriate serializer class based on the action.
+        """
+        if self.action in ['create', 'update', 'partial_update']:
+            return InterestCreateSerializer
+        return InterestSerializer # Default for list, retrieve
+    
+    @extend_schema(parameters=[LANG_PARAM])
+    def list(self, request, *args, **kwargs):
+        return super().list(request, *args, **kwargs)
+
+    @extend_schema(parameters=[LANG_PARAM])
+    def retrieve(self, request, *args, **kwargs):
+        return super().retrieve(request, *args, **kwargs)
 
 class UniversityViewSet(viewsets.ReadOnlyModelViewSet):
     queryset = University.objects.all()
     serializer_class = UniversitySerializer
+    
+    @extend_schema(parameters=[LANG_PARAM])
+    def list(self, request, *args, **kwargs):
+        return super().list(request, *args, **kwargs)
+
+    @extend_schema(parameters=[LANG_PARAM])
+    def retrieve(self, request, *args, **kwargs):
+        return super().retrieve(request, *args, **kwargs)
+    
 
 class StudyFieldViewSet(viewsets.ReadOnlyModelViewSet):
     queryset = StudyField.objects.all()
     serializer_class = StudyFieldSerializer
+    
+    @extend_schema(parameters=[LANG_PARAM])
+    def list(self, request, *args, **kwargs):
+        return super().list(request, *args, **kwargs)
+
+    @extend_schema(parameters=[LANG_PARAM])
+    def retrieve(self, request, *args, **kwargs):
+        return super().retrieve(request, *args, **kwargs)
 
 class ProfileViewSet(viewsets.ModelViewSet):
     serializer_class = ProfileSerializer
@@ -449,6 +490,14 @@ class TransactionViewSet(viewsets.ReadOnlyModelViewSet):
         return Transaction.objects.filter(
             Q(sender=user) | Q(receiver=user)
         ).select_related('sender', 'receiver')
+        
+    @extend_schema(parameters=[LANG_PARAM])
+    def list(self, request, *args, **kwargs):
+        return super().list(request, *args, **kwargs)
+
+    @extend_schema(parameters=[LANG_PARAM])
+    def retrieve(self, request, *args, **kwargs):
+        return super().retrieve(request, *args, **kwargs)
 
 class EWalletViewSet(viewsets.ReadOnlyModelViewSet):
     serializer_class = EWalletSerializer
@@ -549,6 +598,15 @@ class NotificationViewSet(viewsets.ReadOnlyModelViewSet):
     
     def get_queryset(self):
         return Notification.objects.filter(recipient=self.request.user)
+    
+    @extend_schema(parameters=[LANG_PARAM])
+    def list(self, request, *args, **kwargs):
+        return super().list(request, *args, **kwargs)
+
+    @extend_schema(parameters=[LANG_PARAM])
+    def retrieve(self, request, *args, **kwargs):
+        return super().retrieve(request, *args, **kwargs)
+    
     
     @extend_schema(
         summary="Mark one notification as read",

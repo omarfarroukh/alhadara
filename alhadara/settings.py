@@ -74,7 +74,8 @@ INSTALLED_APPS = [
     'loyaltypoints',
     'referrals',
     'feedback',
-    'entranceexam'
+    'entranceexam',
+    'reports'
 ]
 
 MIDDLEWARE = [

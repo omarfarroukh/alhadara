@@ -2,7 +2,7 @@ from rest_framework import generics, status
 from drf_spectacular.utils import extend_schema, OpenApiResponse
 from rest_framework.response import Response
 from rest_framework.views import APIView
-from .models import LoyaltyPoint
+from .models import LoyaltyPoint, LoyaltyPointLog
 from .serializers import LoyaltyConvertRequestSerializer, LoyaltyPointSerializer, TransactionSerializer
 from core.models import Transaction, EWallet
 from django.db import transaction as db_transaction
@@ -54,6 +54,13 @@ class LoyaltyPointToEwalletView(APIView):
                 # Deduct points
                 loyalty.points -= amount
                 loyalty.save()
+                
+                LoyaltyPointLog.objects.create(
+                    loyalty_account=loyalty,
+                    points=-amount, # A negative value
+                    reason="Converted to e-wallet balance"
+                )
+                
                 # Deposit to ewallet
                 wallet, _ = EWallet.objects.get_or_create(user=request.user)
                 try:

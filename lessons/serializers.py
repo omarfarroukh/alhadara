@@ -7,35 +7,50 @@ from datetime import date
 from django.contrib.auth import get_user_model
 from core.models import FileStorage
 from core.serializers import FileStorageSerializer
+from core.utils import TranslationMixin
 User = get_user_model()
 
-class LessonSerializer(serializers.ModelSerializer):
+class LessonSerializer(TranslationMixin, serializers.ModelSerializer):
+    title = serializers.SerializerMethodField()
+    notes = serializers.SerializerMethodField()
     has_homework = serializers.SerializerMethodField()
-    file = serializers.FileField(
-        write_only=True,
-        required=False,
-        allow_null=True,
-        help_text="Upload lesson materials (PDF, DOC, PPT, etc.)"
-    )
-    file_storage_details = FileStorageSerializer(
-        source='file_storage',
-        read_only=True
-    )
+    file = serializers.FileField(write_only=True, required=False, allow_null=True)
+    file_storage_details = FileStorageSerializer(source='file_storage', read_only=True)
+    status_display = serializers.CharField(source='get_status_display', read_only=True)
 
     class Meta:
         model = Lesson
         fields = [
             'id', 'title', 'notes', 'file', 'file_storage_details', 'link',
             'course', 'schedule_slot', 'lesson_order', 'lesson_date',
-            'status', 'created_at', 'updated_at', 'has_homework'
+            'status', 'status_display', 'created_at', 'updated_at', 'has_homework'
         ]
-        read_only_fields = [
-            'id', 'created_at', 'lesson_order', 'updated_at', 'has_homework'
-        ]
+        read_only_fields = ['id', 'created_at', 'lesson_order', 'updated_at', 'has_homework']
+
+    def get_title(self, obj):
+        return self.get_translated_field(obj.title)
+
+    def get_notes(self, obj):
+        return self.get_translated_field(obj.notes)
+
+    def get_has_homework(self, obj):
+        return obj.homework_assignments_in_lessons_app.exists()
     
     def get_has_homework(self, obj):
         return obj.homework_assignments_in_lessons_app.exists()
     
+
+class LessonCreateUpdateSerializer(serializers.ModelSerializer):
+    # This serializer is used for create/update actions and has writable fields.
+    file = serializers.FileField(write_only=True, required=False, allow_null=True)
+
+    class Meta:
+        model = Lesson
+        fields = [
+            'title', 'notes', 'file', 'link', 'course',
+            'schedule_slot', 'lesson_date', 'status'
+        ]
+
     def validate(self, data):
         schedule_slot = data.get('schedule_slot') or getattr(self.instance, 'schedule_slot', None)
         course = data.get('course') or getattr(self.instance, 'course', None)
@@ -101,20 +116,40 @@ class LessonSerializer(serializers.ModelSerializer):
 
         validated_data['file_storage'] = file_storage
         return Lesson.objects.create(**validated_data)
-    
-    
-class HomeworkSerializer(serializers.ModelSerializer):
+
+
+
+class HomeworkSerializer(TranslationMixin, serializers.ModelSerializer):
+    title = serializers.SerializerMethodField()
+    description = serializers.SerializerMethodField()
     teacher = serializers.ReadOnlyField(source='teacher.id')
     course = serializers.ReadOnlyField(source='course.id')
+    status_display = serializers.CharField(source='get_status_display', read_only=True)
+
     class Meta:
         model = Homework
         fields = [
             'id', 'title', 'description', 'form_link', 'deadline', 'lesson',
-            'course', 'teacher', 'max_score', 'is_mandatory', 'status',
+            'course', 'teacher', 'max_score', 'is_mandatory', 'status', 'status_display',
             'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'created_at', 'updated_at', 'teacher', 'course', 'status']
 
+    def get_title(self, obj):
+        return self.get_translated_field(obj.title)
+
+    def get_description(self, obj):
+        return self.get_translated_field(obj.description)
+
+
+class HomeworkCreateUpdateSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Homework
+        fields = [
+            'title', 'description', 'form_link', 'deadline',
+            'lesson', 'max_score', 'is_mandatory'
+        ]
+    
     def validate(self, data):
         lesson = data.get('lesson') or getattr(self.instance, 'lesson', None)
         deadline = data.get('deadline') or getattr(self.instance, 'deadline', None)
@@ -122,7 +157,8 @@ class HomeworkSerializer(serializers.ModelSerializer):
             if deadline.date() <= lesson.lesson_date:
                 raise serializers.ValidationError('Homework deadline must be at least one day after the lesson date.')
         return data
-
+    
+    
 class AttendanceSerializer(serializers.ModelSerializer):
     enrollment = serializers.PrimaryKeyRelatedField(queryset=Enrollment.objects.all(), required=True)
     student_name = serializers.SerializerMethodField()
@@ -149,15 +185,19 @@ class HomeworkMiniSerializer(serializers.ModelSerializer):
         model = Homework
         fields = ['id', 'title']
 
-class LessonSummarySerializer(serializers.ModelSerializer):
+class LessonSummarySerializer(TranslationMixin, serializers.ModelSerializer):
     homework = HomeworkMiniSerializer(many=True, source='homework_assignments_in_lessons_app')
     attended = serializers.SerializerMethodField()
     attendance_rate = serializers.SerializerMethodField()
-
+    title = serializers.SerializerMethodField()
+    
     class Meta:
         model = Lesson
         fields = ['id', 'title', 'lesson_date','lesson_order', 'status', 'homework', 'attended', 'attendance_rate']
 
+    def get_title(self, obj):
+        return self.get_translated_field(obj.title)
+    
     def get_attended(self, obj):
         user = self.context.get('request').user
         if hasattr(user, 'user_type') and user.user_type == 'student':
@@ -203,16 +243,43 @@ class HomeworkGradeSerializer(serializers.ModelSerializer):
         return data
 
 
-class ScheduleSlotNewsSerializer(serializers.ModelSerializer):
-    file_storage = serializers.PrimaryKeyRelatedField(
-        queryset=FileStorage.objects.all(), required=False, allow_null=True
-    )
+class ScheduleSlotNewsSerializer(TranslationMixin, serializers.ModelSerializer):
+    title = serializers.SerializerMethodField()
+    content = serializers.SerializerMethodField()
     file_storage_details = FileStorageSerializer(source='file_storage', read_only=True)
+    type_display = serializers.CharField(source='get_type_display', read_only=True)
     
     class Meta:
         model = ScheduleSlotNews
-        fields = '__all__'
+        fields = '__all__' # Simplified for brevity, but includes the new fields
         read_only_fields = ['id', 'created_at', 'author', 'file_storage_details']
+
+    def get_title(self, obj):
+        return self.get_translated_field(obj.title)
+
+    def get_content(self, obj):
+        return self.get_translated_field(obj.content)
+
+class ScheduleSlotNewsCreateUpdateSerializer(serializers.ModelSerializer):
+    # This serializer handles incoming data for both create and update.
+    # We make file_storage writable here.
+    file_storage = serializers.PrimaryKeyRelatedField(
+        queryset=FileStorage.objects.all(), required=False, allow_null=True
+    )
+    
+    class Meta:
+        model = ScheduleSlotNews
+        fields = [
+            'schedule_slot', 'type', 'title', 'content', 'image',
+            'related_homework', 'related_quiz', 'file_storage'
+        ]
+
+    def validate(self, data):
+        # When creating, type is required. When updating, it might not be.
+        if not self.instance and not data.get('type'):
+            raise serializers.ValidationError({"type": "This field is required for new posts."})
+        return data
+
 
 class PrivateLessonProposedOptionSerializer(serializers.ModelSerializer):
     class Meta:

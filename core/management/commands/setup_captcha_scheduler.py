@@ -1,7 +1,7 @@
 # core/management/commands/schedule_captcha_cleanup.py
 from django.core.management.base import BaseCommand
 from django_rq import get_scheduler
-from tasks import cleanup_expired_captchas_task   # adjust import path
+from core.tasks import cleanup_expired_captchas_task   # adjust import path
 
 JOB_ID = "captcha-cleanup-every-5min"
 DEFAULT_CRON = "*/5 * * * *"          # every 5 minutes

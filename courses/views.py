@@ -11,7 +11,7 @@ from .cache_keys import courses_list_key, COURSES_LIST_TIMEOUT
 from django.core.exceptions import ValidationError
 from .models import CourseDiscount, CourseImage, CourseTypeIcon, Department, CourseType, Course, DepartmentIcon, Hall, HallService, ScheduleSlot, Booking,Wishlist, Enrollment
 from .serializers import (
-    BaseEnrollmentSerializer, BookingListSerializer, CourseCreateUpdateSerializer, CourseDiscountCreateSerializer, CourseDiscountSerializer, CourseImageSerializer, CourseTypeIconSerializer, DepartmentIconSerializer, DepartmentSerializer, CourseTypeSerializer, CourseSerializer, GuestBookingSerializer, GuestEnrollmentSerializer, HallSearchQuerySerializer, HallSearchResultSerializer,
+    BaseEnrollmentSerializer, BookingListSerializer, CourseCreateUpdateSerializer, CourseDiscountCreateSerializer, CourseDiscountSerializer, CourseImageSerializer, CourseTypeCreateUpdateSerializer, CourseTypeIconSerializer, DepartmentCreateUpdateSerializer, DepartmentIconSerializer, DepartmentSerializer, CourseTypeSerializer, CourseSerializer, GuestBookingSerializer, GuestEnrollmentSerializer, HallSearchQuerySerializer, HallSearchResultSerializer,
     HallSerializer, HallServiceSerializer, ScheduleSlotSerializer, StudentBookingSerializer, TeacherScheduleSlotSerializer, StudentEnrollmentSerializer,WishlistSerializer,
     HallAvailabilityResponseSerializer
 )
@@ -39,6 +39,15 @@ logger = logging.getLogger(__name__)
 User = get_user_model()
 
 
+LANG_PARAM = OpenApiParameter(
+    name='lang',
+    type=OpenApiTypes.STR,
+    location=OpenApiParameter.QUERY,
+    description='Language code to translate translatable fields (en, ar)',
+    required=False,
+    enum=['en', 'ar']  
+)
+
 class DepartmentViewSet(viewsets.ModelViewSet):
     queryset = Department.objects.all().select_related('icon')
     serializer_class = DepartmentSerializer
@@ -50,6 +59,15 @@ class DepartmentViewSet(viewsets.ModelViewSet):
             return [IsReception()]
         return [permissions.AllowAny()]
     
+    def get_serializer_class(self):
+        """
+        Return the appropriate serializer class based on the action.
+        """
+        if self.action in ['create', 'update', 'partial_update']:
+            return DepartmentCreateUpdateSerializer
+        return DepartmentSerializer # Default for list, retrieve
+    
+    @extend_schema(parameters=[LANG_PARAM])
     def list(self, request, *args, **kwargs):
         # Get filtered queryset
         queryset = self.filter_queryset(self.get_queryset())
@@ -60,6 +78,14 @@ class DepartmentViewSet(viewsets.ModelViewSet):
                     status=status.HTTP_200_OK
                 )
         return super().list(request, *args, **kwargs)
+    
+    
+    @extend_schema(parameters=[LANG_PARAM])
+    def retrieve(self, request, *args, **kwargs):
+        """
+        Retrieve a department with translated fields.
+        """
+        return super().retrieve(request, *args, **kwargs)
     
     @action(detail=False, methods=['post'])
     def bulk(self, request):
@@ -101,11 +127,18 @@ class CourseTypeViewSet(viewsets.ModelViewSet):
     search_fields = ['name']
     ordering_fields = ['name']
     
+    def get_serializer_class(self):
+        if self.action in ['create', 'update', 'partial_update']:
+            return CourseTypeCreateUpdateSerializer
+        return CourseTypeSerializer
+    
+    
     def get_permissions(self):
         if self.action in ['create', 'update', 'partial_update', 'destroy']:
             return [IsReception()]
         return [permissions.AllowAny()]
     
+    @extend_schema(parameters=[LANG_PARAM])
     def list(self, request, *args, **kwargs):
         department_id = request.query_params.get('department')
         
@@ -129,7 +162,14 @@ class CourseTypeViewSet(viewsets.ModelViewSet):
                 )
         
         return super().list(request, *args, **kwargs)
-
+    
+    @extend_schema(parameters=[LANG_PARAM])
+    def retrieve(self, request, *args, **kwargs):
+        """
+        Retrieve a course type with translated fields.
+        """
+        return super().retrieve(request, *args, **kwargs)
+    
     @action(detail=False, methods=['post'])
     def bulk(self, request):
         serializer = self.get_serializer(data=request.data, many=True)
@@ -250,14 +290,6 @@ class CourseViewSet(viewsets.ModelViewSet):
     search_fields = ['title', 'description']
     ordering_fields = ['title', 'price', 'duration', 'category']
     
-    LANG_PARAM = OpenApiParameter(
-        name='lang',
-        type=OpenApiTypes.STR,
-        location=OpenApiParameter.QUERY,
-        description='Language code to translate translatable fields (en, ar)',
-        required=False,
-        enum=['en', 'ar']          # <-- Swagger dropdown
-    )
     
     def get_serializer_class(self):
         if self.action in ['create', 'update', 'partial_update']:
@@ -414,39 +446,44 @@ class CourseViewSet(viewsets.ModelViewSet):
     )
     @action(detail=False, methods=['get'])
     def deals(self, request):
-        """Get courses with active discounts (deals)"""
-        # Get courses with active discounts
+        """Courses whose *current* discount is active."""
         now = timezone.now()
-        discounted_courses = self.get_queryset().filter(
-            discount__status='active',
-            discount__start_date__lte=now,
-            discount__end_date__gte=now
-        ).select_related('discount')
-        
-        # Apply minimum discount filter if provided
+        qs = (
+            self.get_queryset()
+            .filter(
+                discounts__status='active',
+                discounts__start_date__lte=now,
+                discounts__end_date__gte=now,
+            )
+            .distinct()
+        )
+
+        # optional min-discount filter
         min_discount = request.query_params.get('min_discount')
         if min_discount:
             try:
                 min_discount = int(min_discount)
-                # Filter by discount percentage
-                filtered_courses = []
-                for course in discounted_courses:
-                    if course.discount.discount_percentage >= min_discount:
-                        filtered_courses.append(course)
-                discounted_courses = filtered_courses
+                # evaluate only once, then keep courses whose *active* discount qualifies
+                qs = [
+                    c for c in qs
+                    if (active := c.discounts.filter(
+                            status='active',
+                            start_date__lte=now,
+                            end_date__gte=now
+                        ).first()) and active.discount_percentage >= min_discount
+                ]
             except ValueError:
-                return Response(
-                    {'error': 'min_discount must be an integer'},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-        
-        if not discounted_courses:
-            return Response(
-                {'message': 'No deals available at the moment'},
-                status=status.HTTP_200_OK
-            )
-        
-        serializer = self.get_serializer(discounted_courses, many=True)
+                return Response({'error': 'min_discount must be an integer'}, 400)
+
+        if not qs:
+            return Response({'message': 'No deals available'}, 200)
+
+        page = self.paginate_queryset(qs)
+        if page is not None:
+            serializer = self.get_serializer(page, many=True)
+            return self.get_paginated_response(serializer.data)
+
+        serializer = self.get_serializer(qs, many=True)
         return Response(serializer.data)
 
 
@@ -1097,6 +1134,7 @@ class EnrollmentViewSet(viewsets.ModelViewSet):
     
     @extend_schema(
         parameters=[
+            LANG_PARAM,
             OpenApiParameter(
                 name='schedule_slot',
                 description='Filter by schedule slot ID',
@@ -1143,6 +1181,10 @@ class EnrollmentViewSet(viewsets.ModelViewSet):
     )
     def list(self, request, *args, **kwargs):
         return super().list(request, *args, **kwargs)
+    
+    @extend_schema(parameters=[LANG_PARAM])
+    def retrieve(self, request, *args, **kwargs):
+        return super().retrieve(request, *args, **kwargs)
     
     def perform_create(self, serializer):
         """Create enrollment and process initial payment"""
@@ -1404,6 +1446,7 @@ class UnifiedSearchViewSet(viewsets.ViewSet):
         summary='Search across departments, course types, and courses',
         description='Search across multiple models simultaneously or filter by specific models',
         parameters=[
+            LANG_PARAM,
             OpenApiParameter(
                 name='search',
                 type=OpenApiTypes.STR,
@@ -1550,13 +1593,19 @@ class UnifiedSearchViewSet(viewsets.ViewSet):
         
         # Search in departments
         if 'departments' in selected_models:
-            department_results = self._search_departments(search_query)
-            results['departments'] = DepartmentSerializer(department_results, many=True).data
+                department_results = self._search_departments(search_query)
+                # --- FIX: Add context ---
+                results['departments'] = DepartmentSerializer(
+                    department_results, many=True, context={'request': request}
+                ).data
         
         # Search in course types
         if 'course_types' in selected_models:
             course_type_results = self._search_course_types(search_query)
-            results['course_types'] = CourseTypeSerializer(course_type_results, many=True).data
+            # --- FIX: Add context ---
+            results['course_types'] = CourseTypeSerializer(
+                course_type_results, many=True, context={'request': request}
+            ).data
         
         # Search in courses
         if 'courses' in selected_models:

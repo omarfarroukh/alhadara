@@ -9,6 +9,7 @@ from drf_spectacular.types import OpenApiTypes
 from django.utils import timezone
 from .models import *
 from .serializers import *
+from core.tasks import notify_exam_attempt_submitted, notify_exam_graded_task
 from core.permissions import IsTeacherOrReceptionOrAdmin
 
 def populate_attempt_questions(attempt):
@@ -113,7 +114,7 @@ class ExamAttemptViewSet(viewsets.ModelViewSet):
     def get_permissions(self):
         if self.action == 'submit_mcq_bulk':
             return [permissions.IsAuthenticated()]
-        if self.action == 'grade_attempt':
+        if self.action == 'grade':
             return [IsTeacherOrReceptionOrAdmin()]
         return [permissions.IsAuthenticated()]
 
@@ -158,6 +159,8 @@ class ExamAttemptViewSet(viewsets.ModelViewSet):
             attempt.mcq_completed_at = timezone.now()
             attempt.status = 'mcq_completed'
             attempt.save()
+            
+            notify_exam_attempt_submitted.delay(attempt.id)
 
         return Response(ExamAttemptSerializer(attempt).data)
     
@@ -181,4 +184,6 @@ class ExamAttemptViewSet(viewsets.ModelViewSet):
         attempt.status = 'graded'
         attempt.graded_at = timezone.now()
         attempt.calculate_final_score()
+        notify_exam_graded_task.delay(attempt.id)
+
         return Response(ExamAttemptSerializer(attempt).data)

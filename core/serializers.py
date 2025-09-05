@@ -12,6 +12,7 @@ from rest_framework.exceptions import ValidationError as DRFValidationError
 from django.contrib.auth import get_user_model
 from django.core.cache import cache
 from .validators import validate_password_strength
+from core.utils import TranslationMixin
 User = get_user_model()
 
 class CustomUserCreateSerializer(serializers.ModelSerializer):
@@ -194,6 +195,7 @@ class PasswordResetRequestSerializer(serializers.Serializer):
         if not User.objects.filter(phone=value).exists():
             raise serializers.ValidationError("No user registered with this number")
         return value
+    
 class SecurityAnswerValidationSerializer(serializers.Serializer):
     phone = serializers.CharField(
         required=True,
@@ -238,6 +240,7 @@ class SecurityAnswerValidationSerializer(serializers.Serializer):
             )
             
         return data
+    
 class NewPasswordSerializer(serializers.Serializer):
     reset_token = serializers.CharField(
         required=True,
@@ -311,18 +314,37 @@ class PasswordResetOTPValidateSerializer(serializers.Serializer):
         return data
 
 
+class UniversitySerializer(TranslationMixin, serializers.ModelSerializer):
+    name = serializers.SerializerMethodField()
     
-class UniversitySerializer(serializers.ModelSerializer):
     class Meta:
         model = University
         fields = ['id', 'name']
-
-class StudyFieldSerializer(serializers.ModelSerializer):
+        
+    def get_name(self, obj):
+        return self.get_translated_field(obj.name)
+    
+class StudyFieldSerializer(TranslationMixin, serializers.ModelSerializer):
+    name = serializers.SerializerMethodField()
+    
     class Meta:
         model = StudyField
         fields = ['id', 'name']
 
-class InterestSerializer(serializers.ModelSerializer):
+    def get_name(self, obj):
+        return self.get_translated_field(obj.name)
+
+class InterestSerializer(TranslationMixin, serializers.ModelSerializer):
+    name = serializers.SerializerMethodField()
+    class Meta:
+        model = Interest
+        fields = ('id', 'name', 'category')
+    
+    def get_name(self, obj):
+        return self.get_translated_field(obj.name)
+        
+
+class InterestCreateSerializer(TranslationMixin, serializers.ModelSerializer):
     class Meta:
         model = Interest
         fields = ('id', 'name', 'category')
@@ -338,13 +360,20 @@ class AddInterestSerializer(serializers.Serializer):
 
 class RemoveInterestSerializer(serializers.Serializer):
     interest = serializers.IntegerField(help_text="ID of the interest to remove")
-class ProfileInterestSerializer(serializers.ModelSerializer):
-    interest_name = serializers.ReadOnlyField(source='interest.name')
+    
+class ProfileInterestSerializer(TranslationMixin, serializers.ModelSerializer):
+    # The name is on the related interest object
+    interest_name = serializers.SerializerMethodField()
     interest_category = serializers.ReadOnlyField(source='interest.category')
     
     class Meta:
         model = ProfileInterest
         fields = ('interest', 'interest_name', 'interest_category', 'intensity')
+
+    def get_interest_name(self, obj):
+        if obj.interest:
+            return self.get_translated_field(obj.interest.name)
+        return None
 
 
 
@@ -368,8 +397,8 @@ class ProfileSerializer(serializers.ModelSerializer):
     full_name = serializers.CharField(source='user.get_full_name', read_only=True)
     studyfield = serializers.PrimaryKeyRelatedField(queryset=StudyField.objects.all(), required=False, allow_null=True)
     university = serializers.PrimaryKeyRelatedField(queryset=University.objects.all(), required=False, allow_null=True)
-    university_name = serializers.CharField(source='university.name', read_only=True)
-    studyfield_name = serializers.CharField(source='studyfield.name', read_only=True)
+    university_name = serializers.SerializerMethodField()
+    studyfield_name = serializers.SerializerMethodField()
     academic_status = serializers.ChoiceField(choices=Profile.ACADEMIC_STATUS_CHOICES, required=False, allow_null=True)
     image = ProfileImageSerializer(many=False, read_only=True)
     
@@ -389,6 +418,16 @@ class ProfileSerializer(serializers.ModelSerializer):
         )
         read_only_fields = ['id', 'english_level', 'german_level', 'french_level', 'spanish_level']
         
+    def get_university_name(self, obj):
+        if obj.university:
+            return self.get_translated_field(obj.university.name)
+        return None # Return null if no university is linked
+
+    def get_studyfield_name(self, obj):
+        if obj.studyfield:
+            return self.get_translated_field(obj.studyfield.name)
+        return None # Return null if no study field is linked
+    
     def create(self, validated_data):
         # Automatically set the user to the current user
         validated_data['user'] = self.context['request'].user
@@ -508,9 +547,11 @@ class DepositRequestSerializer(serializers.ModelSerializer):
         # Create the instance - Django will handle the file upload automatically
         return DepositRequest.objects.create(**validated_data)
 
-class TransactionSerializer(serializers.ModelSerializer):
+class TransactionSerializer(TranslationMixin, serializers.ModelSerializer):
     sender_name = serializers.SerializerMethodField()
     receiver_name = serializers.SerializerMethodField()
+    # Add translation for description
+    description = serializers.SerializerMethodField()
     
     class Meta:
         model = Transaction
@@ -521,7 +562,11 @@ class TransactionSerializer(serializers.ModelSerializer):
         )
         read_only_fields = ('created_at', 'updated_at', 'reference_id')
     
+    def get_description(self, obj):
+        return self.get_translated_field(obj.description)
+
     def get_sender_name(self, obj):
+        # Usernames should not be translated
         if obj.sender:
             return obj.sender.get_full_name()
         return None
@@ -530,12 +575,22 @@ class TransactionSerializer(serializers.ModelSerializer):
         if obj.receiver:
             return obj.receiver.get_full_name()
         return None
+    
+class NotificationSerializer(TranslationMixin, serializers.ModelSerializer):
+    # Add translations for title and message
+    title = serializers.SerializerMethodField()
+    message = serializers.SerializerMethodField()
 
-class NotificationSerializer(serializers.ModelSerializer):
     class Meta:
         model = Notification
         fields = ('id', 'notification_type', 'title', 'message', 'data', 'is_read', 'created_at')
         read_only_fields = ('id', 'created_at')
+
+    def get_title(self, obj):
+        return self.get_translated_field(obj.title)
+
+    def get_message(self, obj):
+        return self.get_translated_field(obj.message)
         
 class TelegramFileSerializer(serializers.Serializer):
     """Serializes Telegram file metadata for API responses."""

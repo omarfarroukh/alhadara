@@ -928,6 +928,22 @@ class Enrollment(models.Model):
             
             if active_enrollments >= self.course.max_students:
                 raise ValidationError("Schedule slot has reached maximum capacity")
+            
+    def get_student_name(self):
+        """
+        Returns the full name for the enrollment,
+        handling both registered students and guests.
+        """
+        if self.is_guest:
+            # For guests, construct the name from the stored fields
+            names = [self.first_name, self.middle_name, self.last_name]
+            return ' '.join(filter(None, names)).strip()
+        
+        if self.student:
+            # For registered students, use their User model's method
+            return self.student.get_full_name()
+            
+        return "Unknown Student" 
     
     def update_status(self):
         """Update status based on schedule slot dates - using > not >="""
@@ -977,7 +993,6 @@ class Enrollment(models.Model):
     def process_payment(self, amount, payment_method='ewallet'):
         """Process payment with support for both eWallet and cash"""
         from core.models import EWallet, Transaction
-        from loyaltypoints.tasks import award_points_task
         
         amount = amount.quantize(Decimal('0.00'))
         if amount <= 0:
@@ -1062,17 +1077,6 @@ class Enrollment(models.Model):
         self.payment_status = 'paid' if self.amount_paid >= self.course.price else 'partial'
         self.save()
 
-        # Award loyalty points (only for student payments, not guests)
-        if self.student and not self.is_guest:
-            if self.amount_paid == amount:
-                # First payment → 5% points
-                points = int(amount * Decimal('0.05'))
-                reason = f"5% loyalty points for initial payment of {amount} on course {self.course.title}"
-            else:
-                points = int(amount * Decimal('0.01'))
-                reason = f"1% loyalty points for additional payment of {amount} on course {self.course.title}"
-            if points > 0:
-                award_points_task.delay(self.student.id, points, reason)
 
     def cancel(self):
         """Cancel enrollment and process refund"""
@@ -1157,10 +1161,10 @@ class CourseDiscount(models.Model):
     ]
     
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    course = models.OneToOneField(
+    course = models.ForeignKey(
         'Course', 
         on_delete=models.CASCADE, 
-        related_name='discount'
+        related_name='discounts'
     )
     
     # Discount details
@@ -1198,7 +1202,12 @@ class CourseDiscount(models.Model):
             models.CheckConstraint(
                 check=models.Q(discounted_price__lt=models.F('original_price')),
                 name='discounted_price_less_than_original'
-            )
+            ),
+            models.UniqueConstraint(
+                fields=['course'],
+                condition=models.Q(status='active'),
+                name='one_active_discount_per_course'
+            ),
         ]
         indexes = [
             models.Index(fields=['status', 'start_date', 'end_date']),
