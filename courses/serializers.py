@@ -148,7 +148,6 @@ class CourseImageSerializer(serializers.ModelSerializer):
 class CourseSerializer(TranslationMixin ,serializers.ModelSerializer):
     title            = serializers.SerializerMethodField()
     description      = serializers.SerializerMethodField()
-    category         = serializers.SerializerMethodField()
     department_name  = serializers.SerializerMethodField()
     course_type_name = serializers.SerializerMethodField()
     is_in_wishlist = serializers.SerializerMethodField()
@@ -184,8 +183,6 @@ class CourseSerializer(TranslationMixin ,serializers.ModelSerializer):
     def get_description(self, obj):
         return self.get_translated_field(obj.description)
 
-    def get_category(self, obj):
-        return self.get_translated_field(obj.category)
     
     def get_department_name(self, obj):
         return self.get_translated_field(obj.department.name)
