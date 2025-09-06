@@ -42,6 +42,9 @@ class NotificationConsumer(AsyncWebsocketConsumer):
             "notification": event['notification']
         }))
         
+    async def notification_counter(self, event):
+        # Nothing to do here – CounterConsumer already handles it
+        pass
         
 class CounterConsumer(AsyncWebsocketConsumer):
     async def connect(self):

@@ -16,7 +16,7 @@ from .serializers import (
     HallAvailabilityResponseSerializer
 )
 from django.db.models import Q, Count, Prefetch,Sum
-from core.permissions import IsAdminOrReception, IsOwnerOrAdminOrReception,IsStudent,IsTeacher,IsReception,IsAdmin
+from core.permissions import IsAdminOrReception, IsStudent,IsAdminOrReception
 from django_filters.rest_framework import DjangoFilterBackend
 from django.contrib.auth import get_user_model
 from rest_framework.generics import get_object_or_404
@@ -56,7 +56,7 @@ class DepartmentViewSet(viewsets.ModelViewSet):
     
     def get_permissions(self):
         if self.action in ['create', 'update', 'partial_update', 'destroy','bulk']:
-            return [IsReception()]
+            return [IsAdminOrReception()]
         return [permissions.AllowAny()]
     
     def get_serializer_class(self):
@@ -135,7 +135,7 @@ class CourseTypeViewSet(viewsets.ModelViewSet):
     
     def get_permissions(self):
         if self.action in ['create', 'update', 'partial_update', 'destroy']:
-            return [IsReception()]
+            return [IsAdminOrReception()]
         return [permissions.AllowAny()]
     
     @extend_schema(parameters=[LANG_PARAM])
@@ -298,7 +298,7 @@ class CourseViewSet(viewsets.ModelViewSet):
 
     def get_permissions(self):
         if self.action in ['create', 'update', 'partial_update', 'destroy']:
-            return [IsReception()]
+            return [IsAdminOrReception()]
         return [permissions.AllowAny()]
     
     @extend_schema(parameters=[LANG_PARAM])
@@ -523,7 +523,7 @@ class HallViewSet(viewsets.ModelViewSet):
     
     def get_permissions(self):
         if self.action in ['create', 'update', 'partial_update', 'destroy']:
-            return [IsReception()]
+            return [IsAdminOrReception()]
         return [permissions.AllowAny()]
 
     @extend_schema(
@@ -624,7 +624,7 @@ class HallViewSet(viewsets.ModelViewSet):
     }},
     responses={200: {'description': 'Services added to hall'}}
     )
-    @action(detail=True, methods=['post'], url_path='add-services', permission_classes=[IsReception])
+    @action(detail=True, methods=['post'], url_path='add-services', permission_classes=[IsAdminOrReception])
     def add_services(self, request, pk=None):
         hall = self.get_object()
         service_ids = request.data.get('service_ids', [])
@@ -806,7 +806,7 @@ class ScheduleSlotViewSet(viewsets.ModelViewSet):
 
     def get_permissions(self):
         if self.action in ['create', 'update', 'partial_update', 'destroy']:
-            return [IsReception()]
+            return [IsAdminOrReception()]
         return [permissions.AllowAny()]
     
     def get_queryset(self):
@@ -985,7 +985,7 @@ class BookingViewSet(viewsets.ModelViewSet):
 
     def get_permissions(self):
         if self.action == 'create_guest':
-            return [IsReception()]
+            return [IsAdminOrReception()]
         if self.action == 'create':
             return [IsStudent()]
         return [permissions.IsAuthenticated()]
@@ -1001,7 +1001,7 @@ class BookingViewSet(viewsets.ModelViewSet):
         serializer.save()
 
     # reception approval for guest
-    @action(detail=True, methods=['post'], permission_classes=[IsReception])
+    @action(detail=True, methods=['post'], permission_classes=[IsAdminOrReception])
     def approve(self, request, pk=None):
         booking = self.get_object()
         if booking.status != 'pending':
@@ -1025,7 +1025,7 @@ class BookingViewSet(viewsets.ModelViewSet):
         return Response({'status': 'cancelled'})
 
     # reception creates guest booking
-    @action(detail=False, methods=['post'], permission_classes=[IsReception])
+    @action(detail=False, methods=['post'], permission_classes=[IsAdminOrReception])
     def create_guest(self, request):
         serializer = GuestBookingSerializer(data=request.data,
                                             context={'request': request})
@@ -1113,11 +1113,11 @@ class EnrollmentViewSet(viewsets.ModelViewSet):
     
     def get_permissions(self):
         if self.action == 'create_guest':
-            return [IsReception()]
+            return [IsAdminOrReception()]
         if self.action in ['create', 'update', 'partial_update', 'destroy']:
             return [IsStudent()]
         if self.action in ['record_cash_payment']:
-            return [IsReception()]
+            return [IsAdminOrReception()]
         return [permissions.IsAuthenticated()]
     
     def get_queryset(self):
@@ -1306,7 +1306,7 @@ class EnrollmentViewSet(viewsets.ModelViewSet):
             400: OpenApiResponse(description='Bad request - invalid amount')
         }
     )
-    @action(detail=True, methods=['post'], permission_classes=[IsReception])
+    @action(detail=True, methods=['post'], permission_classes=[IsAdminOrReception])
     def record_cash_payment(self, request, pk=None):
         """Record cash payment for an enrollment"""
         enrollment = self.get_object()
@@ -1385,7 +1385,7 @@ class EnrollmentViewSet(viewsets.ModelViewSet):
         except ValidationError as e:
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
             
-    @action(detail=False, methods=['post'], permission_classes=[IsReception])
+    @action(detail=False, methods=['post'], permission_classes=[IsAdminOrReception])
     def create_guest(self, request):
         """Endpoint for guest enrollments"""
         serializer = self.get_serializer(data=request.data)

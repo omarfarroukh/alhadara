@@ -45,7 +45,6 @@ def validate_captcha(key: str, answer: str) -> bool:
     try:
         captcha = Captcha.objects.get(key=key)
         ok = captcha.text.upper() == answer.strip().upper() and not captcha.is_expired()
-        captcha.delete()
         return ok
     except Captcha.DoesNotExist:
         return False

@@ -25,6 +25,8 @@ urlpatterns = [
     path('api/entrance-exam/', include('entranceexam.urls')),
     path('api/reports/', include('reports.urls')),
     path('django-rq/', include('django_rq.urls')),
+    path('api/dashboard', include('dashboard.urls')), # <-- ADD THIS LINE
+
 ]
 
 if settings.DEBUG:

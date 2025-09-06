@@ -25,13 +25,13 @@ from .models import (ProfileImage, SecurityQuestion, SecurityAnswer, Interest,
     BankTransferInfo, MoneyTransferInfo, DepositRequest, StudyField, University, Transaction, Notification, WithdrawalRequest
 )
 from .serializers import (
-    InterestCreateSerializer, NewPasswordSerializer, PasswordResetRequestSerializer, ProfileImageSerializer, SecurityAnswerValidationSerializer, SecurityQuestionSerializer, SecurityAnswerSerializer, InterestSerializer, 
+    InterestCreateSerializer, NewPasswordSerializer, PasswordResetRequestSerializer, PickupScheduleSerializer, ProfileImageSerializer, SecurityAnswerValidationSerializer, SecurityQuestionSerializer, SecurityAnswerSerializer, InterestSerializer, 
     ProfileSerializer, EWalletSerializer, DepositMethodSerializer, DepositRequestSerializer, AddInterestSerializer,RemoveInterestSerializer, StudyFieldSerializer, TeacherSerializer, UniversitySerializer, TransactionSerializer, NotificationSerializer,
     PasswordResetOTPRequestSerializer, PasswordResetOTPValidateSerializer, WithdrawalRequestSerializer
 )
 from django.conf import settings
 from rest_framework.permissions import AllowAny
-from .permissions import IsReceptionOrStudent, IsStudent,IsReception, IsAdminOrReception, IsOwnerOrAdminOrReception
+from .permissions import  IsStudent, IsAdminOrReception, IsOwnerOrAdminOrReception
 from django_ratelimit.exceptions import Ratelimited
 from rest_framework.exceptions import NotFound
 from django.shortcuts import render
@@ -652,7 +652,7 @@ class NotificationViewSet(viewsets.ReadOnlyModelViewSet):
 class DepositRequestViewSet(viewsets.ModelViewSet):
     parser_classes = (MultiPartParser, FormParser)
     serializer_class = DepositRequestSerializer
-    permission_classes = [IsReceptionOrStudent]
+    permission_classes = [IsOwnerOrAdminOrReception]
     filter_backends = [filters.OrderingFilter]
     ordering_fields = ['created_at', 'status']
     ordering = ['-created_at']
@@ -1156,26 +1156,24 @@ class WithdrawalRequestViewSet(viewsets.ModelViewSet):
     # Reception-only custom endpoints
     # ---------------------------------
     @extend_schema(
-        request=OpenApiTypes.OBJECT,
-        parameters=[
-            OpenApiParameter(
-                name='pickup_datetime',
-                type=OpenApiTypes.DATETIME,
-                description='ISO-8601 date-time when student will pick up cash',
-                required=True,
-            )
-        ],
-        responses={200: {'type': 'object', 'properties': {'status': {'type': 'string'}}}}
+        request=PickupScheduleSerializer,   # <-- body, not query
+        responses=OpenApiResponse(
+            response={'type': 'object', 'properties': {
+                'status': {'type': 'string'}
+            }},
+            description=''
+        ),
     )
     @action(detail=True, methods=['post'],
             permission_classes=[IsAdminOrReception])
     def schedule(self, request, pk=None):
         wr = self.get_object()
-        pickup = request.data.get('pickup_datetime')
-        if not pickup:
-            return Response({'pickup_datetime': 'This field is required.'},
-                            status=status.HTTP_400_BAD_REQUEST)
-        wr.pickup_datetime = pickup
+        serializer = PickupScheduleSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors,
+                          status=status.HTTP_400_BAD_REQUEST)
+
+        wr.pickup_datetime = serializer.validated_data['pickup_datetime']
         wr.status = 'scheduled'
         wr.save(update_fields=['pickup_datetime', 'status'])
         return Response({'status': 'scheduled'})

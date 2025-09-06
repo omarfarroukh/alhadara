@@ -392,7 +392,7 @@ class ProfileImageSerializer(serializers.ModelSerializer):
         return attrs
         
 
-class ProfileSerializer(serializers.ModelSerializer):
+class ProfileSerializer(TranslationMixin,serializers.ModelSerializer):
     interests = ProfileInterestSerializer(source='profileinterest_set', many=True, read_only=True)
     full_name = serializers.CharField(source='user.get_full_name', read_only=True)
     studyfield = serializers.PrimaryKeyRelatedField(queryset=StudyField.objects.all(), required=False, allow_null=True)
@@ -619,3 +619,8 @@ class WithdrawalRequestSerializer(serializers.ModelSerializer):
     def create(self, validated_data):
         validated_data['user'] = self.context['request'].user
         return super().create(validated_data)
+
+class PickupScheduleSerializer(serializers.Serializer):
+    pickup_datetime = serializers.DateTimeField(
+        help_text="ISO-8601 date-time when student will pick up cash"
+    )

@@ -75,7 +75,8 @@ INSTALLED_APPS = [
     'referrals',
     'feedback',
     'entranceexam',
-    'reports'
+    'reports',
+    'dashboard'
 ]
 
 MIDDLEWARE = [
@@ -93,7 +94,7 @@ MIDDLEWARE = [
 
 CORS_ALLOWED_ORIGINS = os.environ.get('CORS_ALLOWED_ORIGINS', 'http://localhost:3000,http://127.0.0.1:3000').split(',')
 CSRF_TRUSTED_ORIGINS = os.environ.get('CSRF_TRUSTED_ORIGINS', 'http://localhost:3000,http://127.0.0.1:3000').split(',')
-
+CORS_ALLOW_CREDENTIALS = True
 
 CORS_ALLOW_HEADERS = [
     'accept',
@@ -325,9 +326,9 @@ REST_FRAMEWORK = {
         'rest_framework.throttling.UserRateThrottle'
     ],
     'DEFAULT_THROTTLE_RATES': {
-        'anon': '100/hour',  # More generous limit for anonymous users
-        'user': '1000/hour',# Higher limit for authenticated users
-        'login': '5/minute',
+        'anon': '1000000000/hour',  # More generous limit for anonymous users
+        'user': '10000000000/hour',# Higher limit for authenticated users
+        'login': '1000000000/minute',
     }
 }
 
@@ -368,7 +369,7 @@ DJOSER = {
     'HIDE_USERS': False,
     
     'DEFAULT_THROTTLE_RATES': {
-        'login': '5/minute',  # Adjust as needed
+        'login': '1000000000/minute',  # Adjust as needed
     }
 }
 
