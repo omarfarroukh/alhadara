@@ -10,7 +10,7 @@ from django_rq import enqueue
 from drf_spectacular.utils import extend_schema, OpenApiParameter,extend_schema_view
 from drf_spectacular.types import OpenApiTypes
 from .tasks import generate_questions_for_quiz
-from rest_framework.parsers import MultiPartParser
+from rest_framework.parsers import MultiPartParser, JSONParser
 from .models import Quiz, Question, Choice, QuizAttempt, QuizAnswer
 from .serializers import (
     AutoGenQuestionsSerializer, QuizBulkSubmitSerializer, QuizSerializer, QuizDetailSerializer, QuizCreateSerializer,
@@ -262,14 +262,17 @@ class QuizViewSet(viewsets.ModelViewSet):
     @extend_schema(
         summary="Queue MCQ/TF generation (RQ job)",
         description="Upload any file → returns job id. Poll GET /api/jobs/{id}/",
-        request={"multipart/form-data": AutoGenQuestionsSerializer},
+        request={
+            "application/json":      AutoGenQuestionsSerializer,
+            "multipart/form-data": AutoGenQuestionsSerializer
+        },
         responses={202: {"type": "object", "properties": {"job_id": {"type": "string"}}}},
     )
     @action(
         detail=True,
         methods=["post"],
         url_path="auto-generate-questions",
-        parser_classes=[MultiPartParser],
+        parser_classes=[MultiPartParser,JSONParser],
     )
     def auto_generate_questions(self, request, pk=None):
         serializer = AutoGenQuestionsSerializer(data=request.data)

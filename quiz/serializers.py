@@ -2,6 +2,9 @@ from rest_framework import serializers
 from .models import Quiz, Question, Choice, QuizAttempt, QuizAnswer
 from courses.serializers import CourseSerializer, ScheduleSlotSerializer
 from lessons.models import Lesson
+import base64, binascii
+from django.core.files.base import ContentFile
+
 
 class ChoiceSerializer(serializers.ModelSerializer):
     class Meta:
@@ -438,7 +441,19 @@ class QuizBulkSubmitSerializer(QuizSubmitSerializer):
         
         return data
     
+class Base64FileField(serializers.FileField):
+    def to_internal_value(self, data):
+        if isinstance(data, str):
+            try:
+                header, encoded = data.split(";base64,", 1)
+                filename = header.split("name=")[-1].strip('"')
+                file_content = base64.b64decode(encoded)
+                return ContentFile(file_content, name=filename)
+            except (ValueError, binascii.Error) as e:
+                raise serializers.ValidationError("Invalid base64 file") from e
+        return super().to_internal_value(data)
+    
 class AutoGenQuestionsSerializer(serializers.Serializer):
-    file = serializers.FileField()
+    file = Base64FileField()
     num_questions = serializers.IntegerField(min_value=1, max_value=50, default=5)
     difficulty = serializers.ChoiceField(choices=["easy", "medium", "hard"], default="medium")

@@ -273,7 +273,7 @@ class Course(models.Model):
         
         # Define time window for valid schedule slots (next 3 months)
         today = date.today()
-        future_date = today + timedelta(days=90)  # 3 months from now
+        future_date = today + timedelta(days=600)  # 3 months from now
         
         # Get all matching courses with scoring and valid schedule slots
         courses_with_scores = cls.objects.filter(
