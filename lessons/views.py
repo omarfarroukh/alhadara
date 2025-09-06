@@ -511,9 +511,12 @@ class ScheduleSlotNewsViewSet(viewsets.ModelViewSet):
             # If no slot is specified, return nothing.
             return qs.none()
 
+
         try:
             slot = ScheduleSlot.objects.get(pk=schedule_slot_id)
             user = self.request.user
+            if user.is_superuser:
+                return qs.filter(schedule_slot_id=schedule_slot_id)
             
             # Check if user is the teacher or is enrolled
             is_enrolled = slot.enrollments.filter(student=user).exists()
@@ -525,6 +528,7 @@ class ScheduleSlotNewsViewSet(viewsets.ModelViewSet):
             return qs.filter(schedule_slot_id=schedule_slot_id)
         except ScheduleSlot.DoesNotExist:
             return qs.none()
+        
     # --- THIS IS THE CHANGE ---
     @extend_schema(
         summary="Create a new news item",
