@@ -1,7 +1,7 @@
 from django.db.models.signals import post_save, post_delete
 from django.dispatch import receiver
-from .models import Notification, User, EWallet, Transaction
-from .tasks import notify_ewallet_transfer_task
+from .models import Notification, User, EWallet, Transaction, WithdrawalRequest
+from .tasks import notify_ewallet_transfer_task, notify_withdrawal_requested_task
 from channels.layers import get_channel_layer
 from asgiref.sync import async_to_sync
 from django.contrib.auth import get_user_model
@@ -46,3 +46,9 @@ def push_counter_sync(user_id):
 @receiver([post_save, post_delete], sender=Notification)
 def notification_changed(sender, instance, **kwargs):
     push_counter_sync(instance.recipient_id)
+    
+    
+@receiver(post_save, sender=WithdrawalRequest)
+def withdrawal_created_alert(sender, instance, created, **kwargs):
+    if created:                       # only on first save
+        notify_withdrawal_requested_task.delay(instance.id)

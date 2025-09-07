@@ -899,36 +899,57 @@ class Enrollment(models.Model):
     def clean(self):
         """Model-level validation"""
         super().clean()
-        
-        # Check if student is already enrolled
-        if not self.pk:  # Only check on creation
-            if not self.is_guest and self.student:
-                if Enrollment.objects.filter(
-                    student=self.student,
-                    course=self.course,
-                    status__in=['pending', 'active']
-                ).exists():
-                    raise ValidationError("Student is already enrolled in this course")
-                
-                # Check language requirements for non-guest students
-                can_enroll, message = self.course.can_student_enroll_language_wise(self.student)
-                if not can_enroll:
-                    raise ValidationError(f"Language requirement not met: {message}")
-        
-        # Check schedule slot capacity
+
+        # 1. Prevent duplicate enrollments
+        if not self.pk and not self.is_guest and self.student:
+            if Enrollment.objects.filter(
+                student=self.student,
+                course=self.course,
+                status__in=['pending', 'active']
+            ).exists():
+                raise ValidationError("Student is already enrolled in this course")
+
+            # 2. Language requirement check
+            can_enroll, message = self.course.can_student_enroll_language_wise(self.student)
+            if not can_enroll:
+                raise ValidationError(f"Language requirement not met: {message}")
+
+            # 3. NEW: Prevent overlapping schedule slots
+            if self.schedule_slot:
+                from django.db.models import Q
+                slot = self.schedule_slot
+                student = self.student
+
+                day_overlap = Q()
+                for day in slot.days_of_week:
+                    day_overlap |= Q(schedule_slot__days_of_week__contains=[day])
+
+                overlapping = Enrollment.objects.filter(
+                    student=student,
+                    status__in=['pending', 'active'],
+                    schedule_slot__start_time__lt=slot.end_time,
+                    schedule_slot__end_time__gt=slot.start_time
+                ).filter(day_overlap).filter(
+                    Q(schedule_slot__valid_from__lte=slot.valid_from),
+                    Q(schedule_slot__valid_until__gte=slot.valid_from) | Q(schedule_slot__valid_until__isnull=True)
+                ).exclude(pk=self.pk)
+
+                if overlapping.exists():
+                    raise ValidationError("You are already enrolled in a course that overlaps with this schedule slot.")
+
+        # 4. Schedule slot capacity check
         if self.schedule_slot:
             if self.schedule_slot.course != self.course:
                 raise ValidationError("Schedule slot does not belong to the selected course")
-            
-            # Count active enrollments for this schedule slot
-            active_enrollments = Enrollment.objects.filter(
+
+            active_count = Enrollment.objects.filter(
                 schedule_slot=self.schedule_slot,
                 status__in=['pending', 'active']
             ).exclude(pk=self.pk).count()
-            
-            if active_enrollments >= self.course.max_students:
+
+            if active_count >= self.course.max_students:
                 raise ValidationError("Schedule slot has reached maximum capacity")
-            
+ 
     def get_student_name(self):
         """
         Returns the full name for the enrollment,
@@ -1147,6 +1168,7 @@ class Enrollment(models.Model):
         self.full_clean()
         self.update_status()
         super().save(*args, **kwargs)
+
     
 class CourseDiscount(models.Model):
     DISCOUNT_TYPE_CHOICES = [

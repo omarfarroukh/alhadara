@@ -3,6 +3,7 @@ from rest_framework import viewsets, status
 from rest_framework.response import Response
 from rest_framework.permissions import IsAdminUser
 import django_rq
+from rest_framework.decorators import action
 from drf_spectacular.utils import extend_schema, OpenApiExample
 from .models import Report
 from .serializers import ReportSerializer, ReportCreateSerializer
@@ -49,7 +50,8 @@ class ReportViewSet(viewsets.ModelViewSet):
             OpenApiExample('Schedule Slot Performance Report Request', value={"report_type": "schedule_slot_performance", "schedule_slot_id": 42}, request_only=True),
         ]
     )
-    def create(self, request, *args, **kwargs):
+    @action(detail=False, methods=['post'], url_path='create_report', url_name='create_report')
+    def create_report(self, request, *args, **kwargs):
         create_serializer = ReportCreateSerializer(data=request.data)
         create_serializer.is_valid(raise_exception=True)
         data = create_serializer.validated_data

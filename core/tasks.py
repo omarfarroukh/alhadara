@@ -13,7 +13,7 @@ from telegram import Bot
 from django.core.cache import cache
 
 from entranceexam.models import ExamAttempt
-from .models import Captcha, Notification, DepositRequest
+from .models import Captcha, Notification, DepositRequest, WithdrawalRequest
 import logging
 import asyncio
 User = get_user_model()
@@ -534,3 +534,54 @@ def notify_course_discounts():
                 data={'course_id': course.id, 'discount_id': str(discount.id)}
             )
     return "Discount notifications sent."
+
+@job('default', retry=Retry(max=2))
+def notify_withdrawal_scheduled_task(withdrawal_request_id):
+    """
+    Notifies the student that a receptionist/admin has scheduled the pickup
+    for his/her cash-withdrawal request.
+    """
+    try:
+        wr = WithdrawalRequest.objects.select_related('user').get(id=withdrawal_request_id)
+        send_notification_task.delay(
+            recipient_id=wr.user.id,
+            notification_type='withdrawal_scheduled',
+            title='Withdrawal Pick-up Scheduled',
+            message=f'Your withdrawal of {wr.amount} has been scheduled for {wr.pickup_datetime.strftime("%Y-%m-%d %H:%M")}.',
+            data={
+                'withdrawal_request_id': wr.id,
+                'pickup_datetime': wr.pickup_datetime.isoformat(),
+                'amount': str(wr.amount)
+            }
+        )
+    except WithdrawalRequest.DoesNotExist:
+        pass
+
+@job('default', retry=Retry(max=2))
+def notify_withdrawal_requested_task(withdrawal_request_id):
+    """
+    Notifies all reception / admin users that a new withdrawal request
+    has been placed.
+    """
+    try:
+        wr = WithdrawalRequest.objects.select_related('user').get(id=withdrawal_request_id)
+    except WithdrawalRequest.DoesNotExist:
+        return
+
+    staff_ids = User.objects.filter(
+        user_type__in=['reception', 'admin']
+    ).values_list('id', flat=True)
+
+    for uid in staff_ids:
+        send_notification_task.delay(
+            recipient_id=uid,
+            notification_type='withdrawal_requested',
+            title='New Withdrawal Request',
+            message=f'{wr.user.get_full_name()} requested {wr.amount} (pick-up preferred: {wr.pickup_datetime or "not specified"}).',
+            data={
+                'withdrawal_request_id': wr.id,
+                'student_id': wr.user.id,
+                'amount': str(wr.amount),
+                'pickup_datetime': wr.pickup_datetime.isoformat() if wr.pickup_datetime else None
+            }
+        )

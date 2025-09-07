@@ -402,4 +402,3 @@ SPECTACULAR_SETTINGS = {
     # This excludes SimpleJWT views from schema generation if needed
     # 'EXCLUDE_PATH': ['/api/token/', '/api/token/refresh/'],
 }
-

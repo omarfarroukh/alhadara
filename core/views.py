@@ -44,7 +44,7 @@ import uuid
 from django.db.models import Q
 from decimal import Decimal
 import time
-from .tasks import  notify_deposit_request_created_task,notify_deposit_status_changed_task, notify_ewallet_withdrawal_task, notify_password_changed_task, send_telegram_password_reset_otp_task
+from .tasks import  notify_deposit_request_created_task,notify_deposit_status_changed_task, notify_ewallet_withdrawal_task, notify_password_changed_task, send_telegram_password_reset_otp_task,notify_withdrawal_scheduled_task
 from django.db import transaction
 from django.core.exceptions import ValidationError
 
@@ -1176,6 +1176,9 @@ class WithdrawalRequestViewSet(viewsets.ModelViewSet):
         wr.pickup_datetime = serializer.validated_data['pickup_datetime']
         wr.status = 'scheduled'
         wr.save(update_fields=['pickup_datetime', 'status'])
+        
+        notify_withdrawal_scheduled_task.delay(wr.id)
+
         return Response({'status': 'scheduled'})
 
     @extend_schema(

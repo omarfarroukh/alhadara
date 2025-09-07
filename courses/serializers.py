@@ -596,26 +596,24 @@ class StudentEnrollmentSerializer(BaseEnrollmentSerializer):
     def validate(self, data):
         data = super().validate(data)
         data['is_guest'] = False
-        
+
         # Get user from context
         user = self.context['request'].user
-        
+
         # Create temporary instance for validation
         instance = Enrollment(**data)
-        
-        # Auto-fill student info
         instance.student = user
         instance.first_name = user.first_name
         instance.middle_name = user.middle_name
         instance.last_name = user.last_name
         instance.phone = user.phone
         instance.payment_method = 'ewallet'
-        
+
         try:
             instance.clean()
         except ValidationError as e:
             raise serializers.ValidationError(e.message_dict if hasattr(e, 'message_dict') else str(e))
-        
+
         return data
 
 class GuestEnrollmentSerializer(BaseEnrollmentSerializer):
